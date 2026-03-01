@@ -155,3 +155,8 @@ cython_debug/
 
 
 
+
+# C++ and agent temp files
+test_local.ini
+my_relative_ws/
+test_conf.ini

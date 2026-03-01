@@ -14,9 +14,17 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rd-party/googletest/CMakeLists.txt")
     message(FATAL_ERROR "The googletest submodule is missing! Please run: git submodule update --init --recursive")
 endif()
 
-# Enable AddressSanitizer
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+if(CMAKE_BUILD_TYPE MATCHES "Debug")
+    option(ENABLE_ASAN "Enable AddressSanitizer" ON)
+else()
+    option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+endif()
+
+if(ENABLE_ASAN)
+    message(STATUS "AddressSanitizer is ENABLED")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+endif()
 
 # Add submodules
 add_subdirectory(3rd-party/spdlog)
@@ -30,6 +38,7 @@ set(SOURCES
     src/main.cpp
     src/cli.cpp
     src/config.cpp
+    src/workspace.cpp
     src/logger.cpp
 )
 

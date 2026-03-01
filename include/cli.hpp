@@ -2,7 +2,11 @@
 
 #include "config.hpp"
 
+enum class CliResult {
+    Success,
+    ExitSuccess, // For --help and --version
+    ExitFailure  // For parsing errors
+};
+
 // Parse command line arguments and update the configuration
-// Returns true if parsing was successful and execution should continue
-// Returns false if parsing failed or if --help/--version was requested
-bool cli_parse(int argc, char* argv[], AgentConfig& config);
+CliResult cli_parse(int argc, char* argv[], AgentConfig& config);

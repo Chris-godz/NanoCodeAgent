@@ -9,10 +9,11 @@ void print_help() {
               << "Options:\n"
               << "  -e, --execute <prompt>   The task or prompt for the agent to execute (Required)\n"
               << "  -w, --workspace <dir>    Working directory for the agent (Default: .)\n"
-              << "  --model <name>           LLM model to use (Default: gpt-4o, Env: AGENT_MODEL)\n"
-              << "  --api-key <key>          API key for the model provider (Env: AGENT_API_KEY)\n"
-              << "  --base-url <url>         Base URL for the API (Env: AGENT_BASE_URL)\n"
-              << "  --debug                  Enable verbose debug logging\n"
+              << "  --config <path>          Path to configuration file (Env: NCA_CONFIG)\n"
+              << "  --model <name>           LLM model to use (Default: gpt-4o, Env: NCA_MODEL)\n"
+              << "  --api-key <key>          API key for the model provider (Env: NCA_API_KEY)\n"
+              << "  --base-url <url>         Base URL for the API (Env: NCA_BASE_URL)\n"
+              << "  --debug                  Enable verbose debug logging (Env: NCA_DEBUG)\n"
               << "  -h, --help               Show this help message and exit\n"
               << "  -v, --version            Show version information and exit\n\n"
               << "Example:\n"
@@ -23,13 +24,14 @@ void print_version() {
     std::cout << "nano-agent version 0.1.0\n";
 }
 
-bool cli_parse(int argc, char* argv[], AgentConfig& config) {
+CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
     const char* const short_opts = "he:w:v";
     const option long_opts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"version", no_argument, nullptr, 'v'},
         {"execute", required_argument, nullptr, 'e'},
         {"workspace", required_argument, nullptr, 'w'},
+        {"config", required_argument, nullptr, 1004},
         {"model", required_argument, nullptr, 1000},
         {"api-key", required_argument, nullptr, 1001},
         {"base-url", required_argument, nullptr, 1002},
@@ -37,20 +39,26 @@ bool cli_parse(int argc, char* argv[], AgentConfig& config) {
         {nullptr, no_argument, nullptr, 0}
     };
 
+    // Ensure getopt_long state is completely reset to allow multiple parsing in tests
+    optind = 1;
+
     int opt;
     while ((opt = getopt_long(argc, argv, short_opts, long_opts, nullptr)) != -1) {
         switch (opt) {
             case 'h':
                 print_help();
-                return false;
+                return CliResult::ExitSuccess;
             case 'v':
                 print_version();
-                return false;
+                return CliResult::ExitSuccess;
             case 'e':
                 config.prompt = optarg;
                 break;
             case 'w':
                 config.workspace = optarg;
+                break;
+            case 1004:
+                config.config_file_path = optarg;
                 break;
             case 1000:
                 config.model = optarg;
@@ -67,15 +75,15 @@ bool cli_parse(int argc, char* argv[], AgentConfig& config) {
             case '?':
             default:
                 std::cerr << "Try 'agent --help' for more information.\n";
-                return false;
+                return CliResult::ExitFailure;
         }
     }
 
     if (config.prompt.empty()) {
         std::cerr << "Error: Missing required argument '-e' or '--execute'.\n";
         std::cerr << "Try 'agent --help' for more information.\n";
-        return false;
+        return CliResult::ExitFailure;
     }
 
-    return true;
+    return CliResult::Success;
 }
