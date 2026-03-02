@@ -51,6 +51,7 @@ set(SOURCES
     src/sse_parser.cpp
     src/tool_call_assembler.cpp
     src/write_file.cpp
+    src/read_file.cpp
 )
 
 # Main executable
