@@ -1,0 +1,83 @@
+name: AI Doc Generation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - 'build.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  models: read
+  pull-requests: write
+
+jobs:
+  docgen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: latest
+
+      - name: Compute diff
+        id: diff
+        run: |
+          BASE="${{ github.event.before }}"
+          HEAD="${{ github.sha }}"
+          # For workflow_dispatch, diff against HEAD~1
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="HEAD~1"
+          fi
+          DIFF=$(git diff "$BASE" "$HEAD" -- src/ include/ tests/ CMakeLists.txt build.sh 2>/dev/null || git diff HEAD~1 HEAD -- src/ include/ tests/ CMakeLists.txt build.sh)
+          # Truncate to ~100KB
+          DIFF=$(printf '%s' "$DIFF" | head -c 102400)
+          DELIM="DOCGEN_DIFF_$(date +%s%N)"
+          printf 'diff<<%s\n' "$DELIM" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$DIFF" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$DELIM" >> "$GITHUB_OUTPUT"
+
+      - name: Run docgen
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCGEN_MODEL: ${{ vars.DOCGEN_MODEL || 'openai/gpt-4.1-mini' }}
+          CODE_DIFF: ${{ steps.diff.outputs.diff }}
+        run: |
+          bash tools/docgen/generate.sh
+
+      - name: Verify mdBook build
+        run: mdbook build book
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: docgen/auto-update
+          commit-message: 'docs(auto): AI generated documentation update'
+          title: 'docs: AI auto-update book chapters'
+          body: |
+            This PR was automatically created by the AI docgen workflow.
+
+            The AI has analyzed recent code changes and updated the relevant book chapters in `book/src/`.
+
+            **Changes triggered by:** `${{ github.sha }}`
+          add-paths: book/src/**
+          labels: documentation,automated
