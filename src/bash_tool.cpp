@@ -37,7 +37,12 @@ static void set_nonblocking(int fd) {
 
 static void reset_child_environment() {
     // Attempt standard libc clearenv() equivalent clearing POSIX variable injections
-    environ = nullptr;
+#if defined(__linux__) || defined(__GLIBC__)
+    clearenv();
+#else
+    static char* empty[] = {nullptr};
+    environ = empty;
+#endif
 
     // Reseeding sandbox-safe minimum viable runtime states
     setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
@@ -123,7 +128,7 @@ BashResult bash_execute_safe(const std::string& workspace_abs,
         int time_left = timeout_ms - static_cast<int>(elapsed_ms);
 
         if (time_left <= 0) {
-            killpg(pid, SIGKILL);
+            if (killpg(pid, SIGKILL) != 0) kill(pid, SIGKILL);
             result.timed_out = true;
             result.err = "Execution globally timed out";
             killed = true;
@@ -151,7 +156,7 @@ BashResult bash_execute_safe(const std::string& workspace_abs,
                 active_fds = true;
                 
                 if (result.out_bytes > max_out) {
-                    killpg(pid, SIGKILL);
+                    if (killpg(pid, SIGKILL) != 0) kill(pid, SIGKILL);
                     result.truncated = true;
                     result.err = "Stdout bandwidth size ceiling limit triggered process termination";
                     killed = true;
@@ -173,7 +178,7 @@ BashResult bash_execute_safe(const std::string& workspace_abs,
                 active_fds = true;
                 
                 if (result.err_bytes > max_err) {
-                    killpg(pid, SIGKILL);
+                    if (killpg(pid, SIGKILL) != 0) kill(pid, SIGKILL);
                     result.truncated = true;
                     result.err = "Stderr bandwidth cap triggered termination limit";
                     killed = true;

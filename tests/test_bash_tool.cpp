@@ -82,3 +82,26 @@ TEST_F(BashToolTest, BashDualPipeNoDeadlock) {
     EXPECT_GT(res.out_bytes, 9000); 
     EXPECT_GT(res.err_bytes, 9000);
 }
+
+TEST_F(BashToolTest, DangerousPatternRejected) {
+    auto res = bash_execute_safe(test_workspace, "rm -rf / || return 0", 1000, 1024, 1024);
+    EXPECT_FALSE(res.ok);
+    EXPECT_NE(res.err.find("Command rejected: Contains obvious dangerous pattern"), std::string::npos);
+    EXPECT_EQ(res.exit_code, -1);
+}
+
+TEST_F(BashToolTest, EnvironmentIsCleaned) {
+    setenv("LD_PRELOAD", "dummy.so", 1);
+    auto res = bash_execute_safe(test_workspace, "echo ${LD_PRELOAD:-EMPTY}", 1000, 1024, 1024);
+    EXPECT_TRUE(res.ok);
+    EXPECT_EQ(res.out_tail, "EMPTY\n");
+    unsetenv("LD_PRELOAD");
+}
+
+TEST_F(BashToolTest, KillpgKillsBackground) {
+    // Spawns a background sleep and waits. If killpg is bypassed or fails, this script would hang or leak.
+    auto res = bash_execute_safe(test_workspace, "sh -lc 'sleep 100 & wait'", 200, 1024, 1024);
+    EXPECT_FALSE(res.ok);
+    EXPECT_TRUE(res.timed_out);
+    EXPECT_NE(res.exit_code, 0);
+}
