@@ -23,6 +23,7 @@ Commits must include a top-level summary line, a blank line, and a bulleted list
 
 ## 2. Component Rules
 - **Type**: Standard conventional commit types (`feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`).
+  - **CRITICAL**: Do NOT include a `(<scope>)` in the top-level summary line. It must strictly be `<type>: <subject summary>`.
 - **Subject Summary**: Written in the imperative mood, concise, lowercase, and summarizes the core contribution of the commit.
 - **Bullet Points**: Every significant modification must be broken down as a separate list item.
   - Starts with `- `

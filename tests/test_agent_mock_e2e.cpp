@@ -3,13 +3,15 @@
 #include "config.hpp"
 #include "workspace.hpp"
 #include <filesystem>
+#include <chrono>
 
 class AgentMockE2ETest : public ::testing::Test {
 protected:
     std::string test_workspace;
     void SetUp() override {
-        test_workspace = "/tmp/nano_agent_e2e";
-        std::filesystem::remove_all(test_workspace);
+        // Safe randomly stamped workspace generation dodging CI collisions
+        auto now = std::chrono::system_clock::now().time_since_epoch().count();
+        test_workspace = (std::filesystem::temp_directory_path() / ("nano_e2e_" + std::to_string(now))).string();
         std::filesystem::create_directories(test_workspace);
     }
     void TearDown() override {
@@ -82,6 +84,6 @@ TEST_F(AgentMockE2ETest, MockFullChain) {
     // Validate final effect
     EXPECT_EQ(turn, 4); // Executed 4 turns
     
-    // Assert file actually created via the tools execution
+    // Assert file actually created via the tools execution safely nested in temporary directory pattern 
     EXPECT_TRUE(std::filesystem::exists(test_workspace + "/hello.txt"));
 }
