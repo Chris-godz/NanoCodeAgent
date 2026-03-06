@@ -1,41 +1,22 @@
-# 第 1 章：项目概览
+# 概览 (Overview)
 
-## 什么是 NanoCodeAgent？
+## 1. 为什么需要 NanoCodeAgent？ (Why)
+作为一个自动化代码代理的运行环境，我们需要一个确定性强、边界清晰的安全执行沙箱与底层驱动。很多代理环境在 Python 中实现，在系统控制方面可能存在依赖重、安全性难以保障等问题。本项目以 C++ 工具链和严格的 TDD 作为基础，旨在构建一个轻量且能防范越权行为的代理运行宿主。
 
-NanoCodeAgent 是一个**教学型 AI Code Agent**，使用 C++ 实现，展示了如何构建一个
-能够理解自然语言指令、调用工具、操作文件系统的 AI 编码助手的核心机制。
+## 2. 系统当前能力 (What changed)
+基于当前 `main` 分支的代码实现，本系统已具备以下主要能力：
 
-## 项目特性
+- **CLI 与基础配置沙箱**：基于命令行的参数解析，支持从环境变量与本地配置文件中加载配置覆盖（Config Precedence）；安全工作区（Workspace Sandbox）拦截跨目录路径访问。
+- **HTTP/网络与流式解析**：基于系统套接字的通信基础，支持大模型 API 的非阻塞调用、分块流回流以及细粒度的 SSE（Server-Sent Events）事件解析，用以实现打字机效果并控制响应上限。
+- **Tool-call 聚合池与工具分配**：能够收集大模型零散的函数调用的 JSON 流，拼接为结构化数据后分发到宿主。
+- **严格安全的物理读写工具**：提供防止软链接穿透与目录攀爬的 `read_file` 和 `write_file`，配合严格的大小拦截。
+- **完备的 Bash 终端与进程防线**：`bash_tool` 实现了基于 `fork` + `execvp` 的安全隔离子进程、防止锁死的管道拉取、以及严格的时间与输出限制。
+- **包含多轮交互与状态管理的执行环**：由 `main.cpp` 和 `agent_loop.cpp` 构成的闭全循环。当前可拦截超量的无效请求转数，在有限次闭环内执行任务。
 
-- 🤖 **LLM 集成**：通过 HTTP 调用 OpenAI 兼容的 LLM API
-- 🔧 **工具调用**：实现 Function Calling / Tool Use 协议
-- 📁 **文件操作**：读写工作区文件，支持相对路径安全校验
-- 💻 **Shell 工具**：在隔离环境中执行 Bash 命令
-- 📝 **SSE 解析**：支持流式输出（Server-Sent Events）
+> **当前阶段透明度声明**：目前本系统提供了以上健壮的基础能力防线，并建立了一定的单智能体多轮控制循环。但在高级规划（如长程复杂的树状探索或 MCP 协议深度对接等）层面尚在完善路径中，当前系统侧重于“基础设施与防线”建立。
 
-## 目录结构
-
-```
-NanoCodeAgent/
-├── src/                # 源代码
-│   ├── main.cpp        # 程序入口
-│   ├── llm.cpp         # LLM API 调用
-│   ├── http.cpp        # HTTP 客户端
-│   ├── bash_tool.cpp   # Shell 工具
-│   ├── read_file.cpp   # 文件读取工具
-│   ├── write_file.cpp  # 文件写入工具
-│   ├── config.cpp      # 配置解析
-│   ├── logger.cpp      # 日志系统
-│   └── ...
-├── include/            # 头文件
-├── tests/              # 测试
-├── book/               # 本书（mdBook）
-├── tools/docgen/       # AI 文档生成脚本
-└── CMakeLists.txt      # 构建配置
-```
-
-## 快速开始
-
-请参阅[第 2 章：环境搭建与构建](./02-setup.md)。
-
-<!-- TODO: 补充版本历史和贡献指南 -->
+## 3. 接下来往哪里看？
+- [配置与工作区隔离](02-cli-config-workspace.md)
+- [流式解析与网络层](03-http-llm-streaming.md)
+- [安全边界与工具库](04-tools-and-safety.md)
+- [测试驱动实践](05-testing.md)

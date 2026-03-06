@@ -163,3 +163,6 @@ test_conf.ini
 
 # mdBook build output
 book/book/
+
+# Local git worktrees created for vendored submodules
+3rd-party/*.worktrees/

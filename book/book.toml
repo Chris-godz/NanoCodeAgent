@@ -1,11 +1,5 @@
 [book]
-title = "NanoCodeAgent 教学手册"
-authors = ["Chris-godz"]
-description = "一本面向开发者的教学型 AI Code Agent 工程实践指南"
-language = "zh"
+authors = ["Agent"]
+language = "zh-cn"
 src = "src"
-
-[output.html]
-site-url = "/NanoCodeAgent/"
-git-repository-url = "https://github.com/Chris-godz/NanoCodeAgent"
-edit-url-template = "https://github.com/Chris-godz/NanoCodeAgent/edit/main/book/src/{path}"
+title = "Nano Agent Documentation"

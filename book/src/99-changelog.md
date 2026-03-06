@@ -1,46 +1,22 @@
-# 附录：变更日志
+# 更新日志 (Changelog)
 
-本页由 AI 自动维护，记录代码变更对文档的影响。
+此日志仅关注该库核心架构能力的演变，严禁出现未经合并的主观路线图推测。
 
-## 最新变更
-
-<!-- AI_DOCGEN_CHANGELOG_START -->
-### 2026-03-04 09:41 UTC
-
-Updated the testing documentation to reflect changes in the workspace generation method for tests, which now uses a random device for unique workspace names.
-
-<details><summary>Diff snippet</summary>
-
-```diff
-diff --git a/tests/test_agent_loop_limits.cpp b/tests/test_agent_loop_limits.cpp
-index cac67aa..bcb4ef3 100644
---- a/tests/test_agent_loop_limits.cpp
-+++ b/tests/test_agent_loop_limits.cpp
-@@ -4,14 +4,14 @@
- #include "config.hpp"
- #include "logger.hpp"
- #include <filesystem>
--#include <chrono>
-+#include <random>
- 
- class AgentLoopLimitsTest : public ::testing::Test {
- protected:
-     std::string test_workspace;
-     void SetUp() override {
--        auto now = std::chrono::system_clock::now().tim
-```
-
-</details>
-
-
-### 初始版本（书籍创建）
-
-- 创建完整的 8 章教学手册骨架
-- 涵盖项目概览、环境搭建、架构设计、工具调用、HTTP/LLM 集成、文件工具、Shell 工具、配置日志
-- 建立 AI 自动文档维护工作流
-
-<!-- AI_DOCGEN_CHANGELOG_END -->
-
-## 历史变更
-
-> 暂无历史记录。随着代码演进，此处将自动积累变更摘要。
+- **`feat: integrate real LLM networking and unify mock streaming loops`**
+  - 核心突破：全量整合真实的 LLM 网络通讯到流式解析循环中。
+- **`feat(agent): implement agent loop closed-state and multi-tier brake limits bounds`**
+  - 核心突破：加入了多轮拦截循环与超时/错误边界限制。
+- **`feat: bootstrap teaching site with mdBook ...`**
+  - 架构变更：建立规范化的文档站点并引入基于 `mdBook` 的工程脚手架。
+- **`feat: implement bash_execute_safe with DOD resource limits and deadlock-free piping`**
+  - 工具能力：引入完整的、防御死锁的终端沙箱 `bash_tool`。
+- **`feat: implement secure workspace physical write/read tool...`**
+  - 工具能力：实装严密的 `read_file` 和 `write_file` 安全工具边界防线。
+- **`feat: add streaming tool_call aggregation ...`**
+  - 数据解析：实现了增量的 JSON 函数调用拼接技术。
+- **`feat: implement HTTP/LLM bridge ... & SSE streaming and incremental JSON parsing`**
+  - 通讯协议：创建基础的网络 C++ 套接字模块与 SSE 增量解码通道。
+- **`feat: implement config precedence and workspace security sandbox`**
+  - 配置基建：构建四级加载的设定环境以及隔离非法路径的安全目录策略。
+- **`commit (initial): CLI skeleton`**
+  - 工程初始：引入 CLI 选项解析及基础日志接入。
