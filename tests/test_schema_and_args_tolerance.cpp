@@ -9,9 +9,40 @@ using json = nlohmann::json;
 
 TEST(SchemaAndArgsToleranceTest, GetSchemaMatchesCurrentTools) {
     json schema = get_agent_tools_schema();
-    EXPECT_TRUE(schema.is_array());
-    EXPECT_EQ(schema.size(), 6);
+    // String timeout should be accepted by argument parsing.
+    EXPECT_EQ(res.find("Invalid 'timeout_ms' argument"), std::string::npos);
+}
 
+TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsOutOfRangeInteger) {
+    AgentConfig config;
+    config.workspace_abs = ".";
+
+    ToolCall tc;
+    tc.name = "bash_execute_safe";
+    tc.arguments = {
+        {"command", "echo 'hello'"},
+        {"timeout_ms", 3000000000ULL}
+    };
+
+    std::string res = execute_tool(tc, config);
+    EXPECT_NE(res.find("failed"), std::string::npos);
+    EXPECT_NE(res.find("Invalid 'timeout_ms' argument"), std::string::npos);
+}
+
+TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsOutOfRangeString) {
+    AgentConfig config;
+    config.workspace_abs = ".";
+
+    ToolCall tc;
+    tc.name = "bash_execute_safe";
+    tc.arguments = {
+        {"command", "echo 'hello'"},
+        {"timeout_ms", "3000000000"}
+    };
+
+    std::string res = execute_tool(tc, config);
+    EXPECT_NE(res.find("failed"), std::string::npos);
+    EXPECT_NE(res.find("Invalid 'timeout_ms' argument"), std::string::npos);
     bool has_read = false;
     bool has_write = false;
     bool has_bash = false;

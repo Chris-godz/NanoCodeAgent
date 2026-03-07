@@ -1,8 +1,57 @@
 #include "agent_tools.hpp"
+#include <cmath>
+#include <limits>
 
-#include "bash_tool.hpp"
-#include "read_file.hpp"
-#include "repo_tools.hpp"
+namespace {
+
+bool parse_timeout_ms_arg(const nlohmann::json& value, int& timeout_ms) {
+    long long parsed = 0;
+
+    if (value.is_number_integer()) {
+        parsed = value.get<long long>();
+    } else if (value.is_number_unsigned()) {
+        auto parsed_u = value.get<unsigned long long>();
+        if (parsed_u > static_cast<unsigned long long>(std::numeric_limits<long long>::max())) {
+            return false;
+        }
+        parsed = static_cast<long long>(parsed_u);
+    } else if (value.is_number_float()) {
+        double as_double = value.get<double>();
+        if (!std::isfinite(as_double) || std::floor(as_double) != as_double) {
+            return false;
+        }
+        if (as_double < static_cast<double>(std::numeric_limits<long long>::min()) ||
+            as_double > static_cast<double>(std::numeric_limits<long long>::max())) {
+            return false;
+        }
+        parsed = static_cast<long long>(as_double);
+    } else if (value.is_string()) {
+        const auto s = value.get<std::string>();
+        std::size_t idx = 0;
+        try {
+            parsed = std::stoll(s, &idx, 10);
+        } catch (...) {
+            return false;
+        }
+        if (idx != s.size()) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+
+    if (parsed <= 0 || parsed > std::numeric_limits<int>::max()) {
+        return false;
+    }
+
+    timeout_ms = static_cast<int>(parsed);
+    return true;
+}
+
+}
+
+                if (!parse_timeout_ms_arg(t, timeout)) {
+                    return format_tool_error("Invalid 'timeout_ms' argument for bash_execute_safe. Expected integer in range [1, INT_MAX].");
 #include "write_file.hpp"
 
 #include <stdexcept>
