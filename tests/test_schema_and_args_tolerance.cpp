@@ -84,6 +84,36 @@ TEST(SchemaAndArgsToleranceTest, BashTimeoutToleratesStrings) {
     EXPECT_NE(res.find("hello"), std::string::npos);
 }
 
+TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsUnsignedOverflow) {
+    AgentConfig config;
+    config.workspace_abs = ".";
+
+    ToolCall tc;
+    tc.name = "bash_execute_safe";
+    tc.arguments = {
+        {"command", "echo 'hello'"},
+        {"timeout_ms", 3000000000ULL}
+    };
+
+    const std::string res = execute_tool(tc, config);
+    EXPECT_NE(res.find("Argument 'timeout_ms' must be between 1 and"), std::string::npos);
+}
+
+TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsStringOverflow) {
+    AgentConfig config;
+    config.workspace_abs = ".";
+
+    ToolCall tc;
+    tc.name = "bash_execute_safe";
+    tc.arguments = {
+        {"command", "echo 'hello'"},
+        {"timeout_ms", "3000000000"}
+    };
+
+    const std::string res = execute_tool(tc, config);
+    EXPECT_NE(res.find("Argument 'timeout_ms' must be between 1 and"), std::string::npos);
+}
+
 TEST(SchemaAndArgsToleranceTest, MissingArgumentsReturnsErrorGracefully) {
     AgentConfig config;
     config.workspace_abs = "."; 
