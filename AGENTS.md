@@ -29,8 +29,11 @@
 ## Commit Expectations
 
 - Follow the repository commit format when preparing commit messages.
-- Use a top-level conventional summary line without a scope.
+- Use a top-level conventional summary line without a scope, formatted as `<type>: <subject summary>`.
+- Keep the subject summary imperative, concise, and lowercase.
 - Follow the summary with a blank line and bullet items for the concrete changes.
+- Prefix each bullet item as `- <type>[(<scope>)]: <detail>`.
+- Break significant modifications into separate bullet items, and use bullet scopes when they clarify the touched subsystem.
 
 ## AI Customization Layout
 
