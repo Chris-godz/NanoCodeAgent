@@ -83,12 +83,14 @@ Goal: decouple reusable workflows into Skills.
 
 ### Docs Agent Milestone
 
-This starts after `Phase 2`, not before.
+This track follows a local validation first -> change-aware updates -> stronger verification and review -> CI readiness progression.
 
-- [ ] manually run NanoCodeAgent over repo docs, code, and diff context in one workflow
-- [ ] generate a documentation plan and patch as a manual agent task
-- [ ] ship a `Docs Maintainer` skill instead of a CI-side doc generator
-- [ ] reconsider automation only after repeated stable manual dogfooding
+- [x] Milestone 1: build the local-first docgen scaffold with rules, repo-scoped skills, deterministic scripts, generated outputs, and basic verification
+- [ ] Milestone 2: map code changes to documentation impact and classify whether updates are required, optional, or unnecessary
+- [ ] Milestone 3: connect change-impact analysis to incremental updates for README, tutorials, and getting-started documentation
+- [ ] Milestone 4: strengthen verification for commands, paths, configs, environment references, and other doc-to-repo consistency checks
+- [ ] Milestone 5: add a review stage focused on clarity, teaching quality, structure, and completeness before accepting generated docs
+- [ ] Milestone 6: package stable local workflows and prepare the docgen pipeline for future CI / GitHub Actions integration
 
 ## Future Directions
 

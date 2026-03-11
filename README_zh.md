@@ -83,12 +83,14 @@ git submodule update --init --recursive
 
 ### Docs Agent 里程碑
 
-这部分放在 `Phase 2` 之后，而不是之前。
+这条路线遵循：local validation first -> change-aware updates -> stronger verification and review -> CI readiness。
 
-- [ ] 用 NanoCodeAgent 手动跑通一次“读文档 + 读代码 + 读 diff”的完整流程
-- [ ] 以手动 agent workflow 的形式产出文档计划和 patch
-- [ ] 交付 `Docs Maintainer` skill，而不是回到 CI 侧 doc generator
-- [ ] 只有在手动 dogfood 足够稳定后，才重新评估自动化
+- [x] Milestone 1：完成本地优先的 docgen scaffold，包括规则、仓库内 skills、确定性脚本、生成物与基础校验
+- [ ] Milestone 2：把代码变更映射到文档影响，并判断更新是必需、可选还是不需要
+- [ ] Milestone 3：把 change-impact analysis 接到 README、教程与 getting-started 文档的增量更新流程里
+- [ ] Milestone 4：增强 commands、paths、configs、environment references 等 doc-to-repo 一致性校验
+- [ ] Milestone 5：增加聚焦清晰度、教学质量、结构与完整性的 review 阶段，再接受生成文档
+- [ ] Milestone 6：把稳定的本地工作流打包，并为未来接入 CI / GitHub Actions 做准备
 
 ## 未来方向
 
