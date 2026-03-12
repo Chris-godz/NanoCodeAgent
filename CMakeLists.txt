@@ -54,6 +54,7 @@ set(SOURCES
     src/write_file.cpp
     src/read_file.cpp
     src/bash_tool.cpp
+    src/build_test_tools.cpp
     src/repo_tools.cpp
     src/agent_utils.cpp
     src/agent_tools.cpp

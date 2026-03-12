@@ -1,6 +1,7 @@
 #include "agent_tools.hpp"
 #include "apply_patch.hpp"
 #include "bash_tool.hpp"
+#include "build_test_tools.hpp"
 #include "read_file.hpp"
 #include "repo_tools.hpp"
 #include "write_file.hpp"
@@ -10,13 +11,19 @@
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace {
 
 constexpr size_t kMaxReadBytes = 4 * 1024 * 1024;
 constexpr size_t kMaxWriteBytes = 4 * 1024 * 1024;
 constexpr size_t kMaxBashOutputBytes = 1024 * 1024;
+constexpr size_t kDefaultBuildToolOutputBytes = 64 * 1024;
+constexpr size_t kMaxBuildToolOutputBytes = 1024 * 1024;
+constexpr int kDefaultBuildTimeoutMs = 120000;
+constexpr int kDefaultTestTimeoutMs = 120000;
 constexpr size_t kMaxRepoOutputBytes = 64 * 1024;
+constexpr size_t kMaxGitContextLines = 1000;
 
 std::string require_string_arg(const ToolCall& cmd, const char* key, const char* tool_name) {
     if (!cmd.arguments.contains(key)) {
@@ -92,6 +99,65 @@ int parse_timeout_ms_arg(const ToolCall& cmd, const char* key, int default_value
     }
 
     return static_cast<int>(parsed);
+}
+
+bool optional_bool_arg(const ToolCall& cmd, const char* key, bool default_value = false) {
+    if (!cmd.arguments.contains(key)) {
+        return default_value;
+    }
+
+    const auto& value = cmd.arguments.at(key);
+    if (!value.is_boolean()) {
+        throw std::runtime_error("Argument '" + std::string(key) + "' must be a boolean.");
+    }
+    return value.get<bool>();
+}
+
+size_t parse_bounded_output_bytes_arg(const ToolCall& cmd, const char* key, size_t default_value) {
+    const size_t parsed = optional_size_arg(cmd, key, default_value);
+    if (parsed == 0 || parsed > kMaxBuildToolOutputBytes) {
+        throw std::runtime_error("Argument '" + std::string(key) + "' must be between 1 and " +
+                                 std::to_string(kMaxBuildToolOutputBytes) + ".");
+    }
+    return parsed;
+}
+
+size_t clamp_effective_output_limit(size_t requested_limit, size_t registry_output_limit) {
+    if (registry_output_limit == 0) {
+        return requested_limit;
+    }
+    return std::min(requested_limit, registry_output_limit);
+}
+
+void reject_unknown_arguments(const ToolCall& cmd,
+                              const std::vector<std::string>& allowed_keys,
+                              const char* tool_name) {
+    for (const auto& [key, _] : cmd.arguments.items()) {
+        if (std::find(allowed_keys.begin(), allowed_keys.end(), key) == allowed_keys.end()) {
+            throw std::runtime_error("Unknown argument '" + key + "' for " + tool_name + ".");
+        }
+    }
+}
+
+std::string parse_build_mode_arg(const ToolCall& cmd) {
+    const std::string build_mode = optional_string_arg(cmd, "build_mode", "debug");
+    if (build_mode != "debug" && build_mode != "release") {
+        throw std::runtime_error("Argument 'build_mode' must be one of: debug, release.");
+    }
+    return build_mode;
+}
+
+nlohmann::json build_script_result_json(const BuildScriptResult& result) {
+    return nlohmann::json{
+        {"ok", result.ok},
+        {"status", result.status},
+        {"exit_code", result.exit_code},
+        {"stdout", result.stdout_text},
+        {"stderr", result.stderr_text},
+        {"truncated", result.truncated},
+        {"timed_out", result.timed_out},
+        {"summary", result.summary}
+    };
 }
 
 std::vector<std::string> optional_string_array_arg(const ToolCall& cmd, const char* key) {
@@ -225,6 +291,102 @@ ToolRegistry build_default_tool_registry() {
                 {"timed_out", res.timed_out},
                 {"error", res.err}
             };
+        }
+    });
+
+    register_or_throw(&registry, ToolDescriptor{
+        .name = "build_project_safe",
+        .description = "Runs ./build.sh in debug or release mode with bounded retained output.",
+        .category = ToolCategory::Execution,
+        .requires_approval = true,
+        .json_schema = make_parameters_schema({
+            {"build_mode", {
+                {"type", "string"},
+                {"enum", nlohmann::json::array({"debug", "release"})},
+                {"description", "Optional build mode. Defaults to debug."}
+            }},
+            {"clean_first", {
+                {"type", "boolean"},
+                {"description", "If true, run ./build.sh clean before the build."}
+            }},
+            {"timeout_ms", {
+                {"type", "integer"},
+                {"description", "Timeout in milliseconds for the whole build sequence. Default is 120000."}
+            }},
+            {"max_output_bytes", {
+                {"type", "integer"},
+                {"description", "Maximum retained bytes per output stream. Default is 65536."}
+            }}
+        }),
+        .max_output_bytes = kMaxBashOutputBytes,
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+            if (cmd.arguments.contains("target")) {
+                throw std::runtime_error("Argument 'target' is not supported by build_project_safe in v1.");
+            }
+            reject_unknown_arguments(cmd, {"build_mode", "clean_first", "timeout_ms", "max_output_bytes"},
+                                     "build_project_safe");
+            const std::string build_mode = parse_build_mode_arg(cmd);
+            const bool clean_first = optional_bool_arg(cmd, "clean_first", false);
+            const int timeout_ms = parse_timeout_ms_arg(cmd, "timeout_ms", kDefaultBuildTimeoutMs);
+            const size_t requested_output_bytes = parse_bounded_output_bytes_arg(
+                cmd, "max_output_bytes", kDefaultBuildToolOutputBytes);
+            const size_t max_output_bytes = clamp_effective_output_limit(requested_output_bytes, output_limit);
+
+            std::vector<std::string> subcommands;
+            if (clean_first) {
+                subcommands.push_back("clean");
+            }
+            subcommands.push_back(build_mode);
+
+            return build_script_result_json(
+                run_build_script_sequence(config.workspace_abs, subcommands, timeout_ms, max_output_bytes));
+        }
+    });
+
+    register_or_throw(&registry, ToolDescriptor{
+        .name = "test_project_safe",
+        .description = "Runs ./build.sh test with bounded retained output and a small ctest summary.",
+        .category = ToolCategory::Execution,
+        .requires_approval = true,
+        .json_schema = make_parameters_schema({
+            {"timeout_ms", {
+                {"type", "integer"},
+                {"description", "Timeout in milliseconds for the test run. Default is 120000."}
+            }},
+            {"max_output_bytes", {
+                {"type", "integer"},
+                {"description", "Maximum retained bytes per output stream. Default is 65536."}
+            }}
+        }),
+        .max_output_bytes = kMaxBashOutputBytes,
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+            if (cmd.arguments.contains("filter")) {
+                throw std::runtime_error("Argument 'filter' is not supported by test_project_safe in v1.");
+            }
+            if (cmd.arguments.contains("ensure_debug_build")) {
+                throw std::runtime_error(
+                    "Argument 'ensure_debug_build' is not supported because ./build.sh test already ensures a debug build.");
+            }
+            reject_unknown_arguments(cmd, {"timeout_ms", "max_output_bytes"}, "test_project_safe");
+
+            const int timeout_ms = parse_timeout_ms_arg(cmd, "timeout_ms", kDefaultTestTimeoutMs);
+            const size_t requested_output_bytes = parse_bounded_output_bytes_arg(
+                cmd, "max_output_bytes", kDefaultBuildToolOutputBytes);
+            const size_t max_output_bytes = clamp_effective_output_limit(requested_output_bytes, output_limit);
+            auto result = run_build_script_sequence(config.workspace_abs, {"test"}, timeout_ms, max_output_bytes);
+            nlohmann::json json_result = build_script_result_json(result);
+
+            const auto parsed = parse_ctest_summary(result.stdout_text, result.stderr_text);
+            if (parsed.passed_count.has_value()) {
+                json_result["passed_count"] = *parsed.passed_count;
+            }
+            if (parsed.failed_count.has_value()) {
+                json_result["failed_count"] = *parsed.failed_count;
+            }
+            if (!parsed.failed_tests.empty()) {
+                json_result["failed_tests"] = parsed.failed_tests;
+            }
+            return json_result;
         }
     });
 

@@ -64,6 +64,25 @@ git submodule update --init --recursive
 - [x] 增加仓库搜索工具 `rg_search` 与受限目录枚举 `list_files_bounded`
 - [x] 引入 `ToolRegistry` 类型化分发，附带 `ToolCategory` 与 `requires_approval` 元数据
 - [x] 在运行时真正落地只读工具与修改型工具的权限/确认边界
+<<<<<<< HEAD
+- [ ] 增加 patch 校验与拒绝回退流程
+- [x] 支持围绕 CMake 与 `ctest` 的受限 build/test 循环
+- [ ] 强化失败恢复与基于 tool result 的重试提示
+- [ ] 增加显式的提交封装流程，如 `git_add` 与 `git_commit`
+
+### Phase 2
+
+目标：把可复用工作流解耦为 Skills。
+
+- [ ] 定义 skill 目录约定与 metadata/frontmatter 结构
+- [ ] 实现 workspace 与共享位置的 skill loader
+- [ ] 把选中的 skill 注入 prompt / session 装配流程
+- [ ] 内置 C++ 规范、测试流程、git 流程等基础 skills
+- [ ] 通过 CLI 与 config 暴露 skill 开关
+- [ ] 增加 skill 执行 trace 与调试输出
+- [ ] 用 skills 真正跑通一个仓库维护型 dogfood workflow
+
+=======
 - [ ] 增加 patch 校验与拒绝回退流程
 - [ ] 支持围绕 CMake 与 `ctest` 的受限 build/test 循环
 - [ ] 强化失败恢复与基于 tool result 的重试提示
@@ -81,6 +100,7 @@ git submodule update --init --recursive
 - [ ] 增加 skill 执行 trace 与调试输出
 - [ ] 用 skills 真正跑通一个仓库维护型 dogfood workflow
 
+>>>>>>> origin/main
 ### Docs Agent 里程碑
 
 这条路线遵循：local validation first -> change-aware updates -> stronger verification and review -> CI readiness。
@@ -91,6 +111,7 @@ git submodule update --init --recursive
 - [ ] Milestone 4：增强 commands、paths、configs、environment references 等 doc-to-repo 一致性校验
 - [ ] Milestone 5：增加聚焦清晰度、教学质量、结构与完整性的 review 阶段，再接受生成文档
 - [ ] Milestone 6：把稳定的本地工作流打包，并为未来接入 CI / GitHub Actions 做准备
+<<<<<<< HEAD
 
 ## 未来方向
 
@@ -100,3 +121,14 @@ git submodule update --init --recursive
 - Telegram 或其他远程入口
 - 更细粒度的 sandbox / permission 模型
 - 更强的自主 coding workflow
+=======
+
+## 未来方向
+
+更远期方向仍然围绕 runtime 本身展开：
+
+- MCP 集成
+- Telegram 或其他远程入口
+- 更细粒度的 sandbox / permission 模型
+- 更强的自主 coding workflow
+>>>>>>> origin/main

@@ -11,6 +11,7 @@ set(TEST_SOURCES
     ../src/write_file.cpp
     ../src/read_file.cpp
     ../src/bash_tool.cpp
+    ../src/build_test_tools.cpp
     ../src/repo_tools.cpp
     ../src/agent_utils.cpp
     ../src/agent_tools.cpp
@@ -76,6 +77,10 @@ add_executable(test_bash_tool test_bash_tool.cpp ${TEST_SOURCES})
 target_link_libraries(test_bash_tool PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_bash_tool PRIVATE ../include)
 
+add_executable(test_build_test_tools test_build_test_tools.cpp ${TEST_SOURCES})
+target_link_libraries(test_build_test_tools PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_build_test_tools PRIVATE ../include)
+
 gtest_discover_tests(test_llm_parse)
 gtest_discover_tests(test_http_limits)
 gtest_discover_tests(test_sse_parser)
@@ -85,6 +90,7 @@ gtest_discover_tests(test_toolcall_assembler)
 gtest_discover_tests(test_write_file)
 gtest_discover_tests(test_read_file)
 gtest_discover_tests(test_bash_tool)
+gtest_discover_tests(test_build_test_tools)
 
 add_executable(test_agent_mock_e2e test_agent_mock_e2e.cpp ${TEST_SOURCES})
 target_link_libraries(test_agent_mock_e2e PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)

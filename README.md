@@ -65,7 +65,7 @@ Goal: complete a stronger coding workflow loop inside a repository.
 - [x] introduce `ToolRegistry` typed dispatch with `ToolCategory` and `requires_approval` metadata
 - [x] enforce mutation vs read-only tool policy and approval gate at runtime
 - [ ] add patch validation and rejection flow before writeback
-- [ ] support bounded build/test execution loops for CMake and `ctest`
+- [x] support bounded build/test execution loops for CMake and `ctest`
 - [ ] improve failure recovery and retry guidance from tool results
 - [ ] add explicit commit packaging flow with `git_add` and `git_commit`
 

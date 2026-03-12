@@ -1,4 +1,5 @@
 #include "bash_tool.hpp"
+#include "process_env.hpp"
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -8,9 +9,6 @@
 #include <cstring>
 #include <vector>
 #include <chrono>
-
-// Expose standard underlying clearenv mechanism in unistd
-extern char** environ;
 
 static bool contains_dangerous_patterns(const std::string& cmd) {
     const std::vector<std::string> patterns = {
@@ -33,20 +31,6 @@ static void set_nonblocking(int fd) {
     if (flags != -1) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
-}
-
-static void reset_child_environment() {
-    // Attempt standard libc clearenv() equivalent clearing POSIX variable injections
-#if defined(__linux__) || defined(__GLIBC__)
-    clearenv();
-#else
-    static char* empty[] = {nullptr};
-    environ = empty;
-#endif
-
-    // Reseeding sandbox-safe minimum viable runtime states
-    setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
-    setenv("HOME", "/tmp", 1);
 }
 
 BashResult bash_execute_safe(const std::string& workspace_abs,
@@ -93,7 +77,7 @@ BashResult bash_execute_safe(const std::string& workspace_abs,
         close(pipe_err[0]); close(pipe_err[1]);
 
         // 4) Cleanse & Overwrite Environment bypassing parent leakage traps
-        reset_child_environment();
+        process_env::reset_child_environment();
 
         // 5) Trigger standard Shell to parse instructions comprehensively maintaining formatting
         const char* args[] = {"sh", "-lc", command.c_str(), nullptr};
