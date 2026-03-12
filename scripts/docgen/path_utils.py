@@ -61,3 +61,20 @@ def extract_markdown_link_targets(content: str) -> list[str]:
                 targets.add(target)
 
     return sorted(targets)
+
+
+def resolve_doc_relative_target(
+    repo_root: str, doc_file: str, target: str
+) -> tuple[str, str, bool]:
+    """Resolve a document-relative target and report whether it stays in-repo."""
+    repo_root = os.path.abspath(repo_root)
+    doc_dir = os.path.dirname(os.path.abspath(doc_file))
+    full_path = os.path.abspath(os.path.join(doc_dir, target))
+
+    try:
+        in_repo = os.path.commonpath((repo_root, full_path)) == repo_root
+    except ValueError:
+        in_repo = False
+
+    reference = os.path.relpath(full_path, repo_root) if in_repo else target
+    return reference, full_path, in_repo

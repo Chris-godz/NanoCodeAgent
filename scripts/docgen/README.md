@@ -6,7 +6,7 @@ Deterministic scripts that support the documentation automation workflow. These 
 
 | Script | Purpose | Status | Blocking? |
 |--------|---------|--------|-----------|
-| `setup.sh` | Verify environment prerequisites (Python 3, git) | Functional | Yes |
+| `setup.sh` | Verify environment prerequisites (Python 3, git, optional pytest notice) | Functional | Yes |
 | `run_repo_understanding.sh` | Unified entry point for repo-understanding pipeline | Functional | Yes |
 | `repo_map.py` | Generate repository structure map | Functional | Yes |
 | `doc_inventory.py` | Index documentation files and assess staleness | Functional | Yes |
@@ -61,6 +61,9 @@ python3 scripts/docgen/<script>.py [--root <repo-root>] [--output <path>]
 # Prerequisites
 bash scripts/docgen/setup.sh
 
+# Optional test dependency for regression suite
+python3 -m pip install pytest
+
 # Full pipeline
 bash scripts/docgen/run_repo_understanding.sh
 
@@ -75,6 +78,9 @@ python3 scripts/docgen/verify_doc_consistency.py README.md --root .
 # Regression tests
 python3 -m pytest tests/test_docgen_verify.py -v
 ```
+
+`setup.sh` verifies tool availability only. It reports whether `pytest` is present,
+but does not install Python packages for you.
 
 ## Relationship to Skills
 

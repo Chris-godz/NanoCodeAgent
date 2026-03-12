@@ -32,9 +32,17 @@ import re
 import sys
 
 try:
-    from .path_utils import extract_markdown_link_targets, is_repo_reference
+    from .path_utils import (
+        extract_markdown_link_targets,
+        is_repo_reference,
+        resolve_doc_relative_target,
+    )
 except ImportError:
-    from path_utils import extract_markdown_link_targets, is_repo_reference
+    from path_utils import (
+        extract_markdown_link_targets,
+        is_repo_reference,
+        resolve_doc_relative_target,
+    )
 
 
 # Prefixes whose absence is an error, not just a warning.
@@ -53,23 +61,19 @@ def extract_filenames(content: str) -> list[str]:
 
 def extract_link_references(
     content: str, doc_file: str, root: str
-) -> list[tuple[str, str]]:
+) -> tuple[list[tuple[str, str]], list[str]]:
     """Extract local Markdown link targets and resolve them for existence checks."""
-    doc_dir = os.path.dirname(os.path.abspath(doc_file))
-    repo_root = os.path.abspath(root)
     references: dict[str, str] = {}
+    escaped: set[str] = set()
 
     for target in extract_markdown_link_targets(content):
-        full_path = os.path.abspath(os.path.join(doc_dir, target))
-        try:
-            in_repo = os.path.commonpath((repo_root, full_path)) == repo_root
-        except ValueError:
-            in_repo = False
-
-        reference = os.path.relpath(full_path, repo_root) if in_repo else target
+        reference, full_path, in_repo = resolve_doc_relative_target(root, doc_file, target)
+        if not in_repo:
+            escaped.add(target)
+            continue
         references.setdefault(reference, full_path)
 
-    return sorted(references.items())
+    return sorted(references.items()), sorted(escaped)
 
 
 def main() -> None:
@@ -91,9 +95,14 @@ def main() -> None:
         filename: os.path.join(root, filename)
         for filename in extract_filenames(content)
     }
-    references.update(extract_link_references(content, args.doc_file, root))
+    link_references, escaped_links = extract_link_references(content, args.doc_file, root)
+    references.update(link_references)
     errors: list[str] = []
     warnings: list[str] = []
+
+    for target in escaped_links:
+        errors.append(target)
+        print(f"  ERROR  {target} — escapes repo root")
 
     for fname, full in sorted(references.items()):
         if os.path.exists(full):

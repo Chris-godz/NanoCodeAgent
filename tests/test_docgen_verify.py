@@ -65,6 +65,16 @@ class TestVerifyPaths(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 0, f"stdout: {r.stdout}\nstderr: {r.stderr}")
 
+    def test_repo_escape_link_fails(self):
+        r = run_script(
+            "verify_paths.py",
+            os.path.join(FIXTURES, "repo_escape_link.md"),
+            "--root",
+            REPO_ROOT,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("escapes repo root", r.stdout + r.stderr)
+
 
 class TestVerifyLinks(unittest.TestCase):
     def test_good_doc_passes(self):
@@ -145,6 +155,16 @@ class TestVerifyDocConsistency(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}\nstderr: {r.stderr}")
         self.assertIn("scripts/docgen/fake_tool", r.stdout + r.stderr)
+
+    def test_repo_escape_link_fails(self):
+        r = run_script(
+            "verify_doc_consistency.py",
+            os.path.join(FIXTURES, "repo_escape_link.md"),
+            "--root",
+            REPO_ROOT,
+        )
+        self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}\nstderr: {r.stderr}")
+        self.assertIn("escapes repo root", r.stdout + r.stderr)
 
 
 class TestRepoMap(unittest.TestCase):

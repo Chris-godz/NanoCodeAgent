@@ -23,9 +23,17 @@ import re
 import sys
 
 try:
-    from .path_utils import extract_markdown_link_targets, is_repo_reference
+    from .path_utils import (
+        extract_markdown_link_targets,
+        is_repo_reference,
+        resolve_doc_relative_target,
+    )
 except ImportError:
-    from path_utils import extract_markdown_link_targets, is_repo_reference
+    from path_utils import (
+        extract_markdown_link_targets,
+        is_repo_reference,
+        resolve_doc_relative_target,
+    )
 
 
 def extract_paths(content: str) -> tuple[list[str], list[str]]:
@@ -76,7 +84,10 @@ def main() -> None:
 
     # Link targets are document-relative
     for p in link_targets:
-        full = os.path.normpath(os.path.join(doc_dir, p))
+        _, full, in_repo = resolve_doc_relative_target(root, args.doc_file, p)
+        if not in_repo:
+            errors.append(f"{p} (escapes repo root)")
+            continue
         if not os.path.exists(full):
             errors.append(p)
 
