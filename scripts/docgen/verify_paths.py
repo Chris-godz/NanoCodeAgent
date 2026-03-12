@@ -22,49 +22,10 @@ import os
 import re
 import sys
 
-
-ROOT_FILE_NAMES = {"CMakeLists.txt", "Dockerfile", "LICENSE", "Makefile"}
-ROOT_FILE_SUFFIXES = {
-    ".cfg",
-    ".cmake",
-    ".conf",
-    ".ini",
-    ".json",
-    ".md",
-    ".rst",
-    ".sh",
-    ".toml",
-    ".txt",
-    ".xml",
-    ".yaml",
-    ".yml",
-}
-ROOT_DOTFILES = {
-    ".clang-format",
-    ".clang-tidy",
-    ".editorconfig",
-    ".env",
-    ".env.example",
-    ".gitattributes",
-    ".gitignore",
-}
-
-
-def is_root_file_candidate(candidate: str) -> bool:
-    """Return whether a bare token looks like a root-level repo file."""
-    if candidate in ROOT_FILE_NAMES or candidate in ROOT_DOTFILES:
-        return True
-
-    stem, suffix = os.path.splitext(candidate)
-    return bool(stem) and suffix in ROOT_FILE_SUFFIXES
-
-
-def is_backtick_path_candidate(candidate: str) -> bool:
-    """Return whether a backtick token should be verified as a repo path."""
-    if candidate.startswith("http") or candidate.startswith("-") or " " in candidate:
-        return False
-
-    return "/" in candidate or is_root_file_candidate(candidate)
+try:
+    from .path_utils import extract_markdown_link_targets, is_repo_reference
+except ImportError:
+    from path_utils import extract_markdown_link_targets, is_repo_reference
 
 
 def extract_paths(content: str) -> tuple[list[str], list[str]]:
@@ -79,17 +40,11 @@ def extract_paths(content: str) -> tuple[list[str], list[str]]:
     # Backtick-enclosed paths (e.g., `src/main.cpp`, `build.sh`)
     for match in re.finditer(r"`([^`]+)`", content):
         candidate = match.group(1).strip()
-        if is_backtick_path_candidate(candidate):
+        if is_repo_reference(candidate):
             backtick_paths.add(candidate)
 
-    # Markdown link targets (e.g., [text](path/to/file.md))
-    for match in re.finditer(r"\]\(([^)]+)\)", content):
-        target = match.group(1).strip()
-        if not target.startswith("http") and not target.startswith("#"):
-            # Strip anchors
-            target = target.split("#")[0]
-            if target:
-                link_targets.add(target)
+    for target in extract_markdown_link_targets(content):
+        link_targets.add(target)
 
     return sorted(backtick_paths), sorted(link_targets)
 

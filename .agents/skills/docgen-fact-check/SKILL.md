@@ -28,7 +28,7 @@ Validate that documentation content is factually consistent with the current rep
 
 1. Run `scripts/docgen/verify_paths.py` against the target document.
 2. Run `scripts/docgen/verify_links.py` to check internal references.
-3. Run `scripts/docgen/verify_doc_consistency.py` to check config keys, CLI args, defaults, and env vars.
+3. Run `scripts/docgen/verify_doc_consistency.py` to check documented path and script references, and note any `NOT_IMPLEMENTED` categories it reports.
 4. Run `scripts/docgen/verify_commands.py` for command syntax validation.
 5. For each claim in the document, trace it to a source of truth using the fact source priority:
    1. Source code

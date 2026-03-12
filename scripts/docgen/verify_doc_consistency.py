@@ -2,9 +2,10 @@
 """verify_doc_consistency.py — Check doc claims against repository artifacts.
 
 Purpose:
-    Verify that file paths and script references mentioned in documentation
-    exist in the repository. Path references under ``scripts/`` and ``.agents/``
-    are treated as errors (exit 1); other missing paths are warnings only.
+    Verify that file paths, script references, and local Markdown link targets
+    mentioned in documentation exist in the repository. Path references under
+    ``scripts/`` and ``.agents/`` are treated as errors (exit 1); other missing
+    paths are warnings only.
 
 Usage:
     python3 scripts/docgen/verify_doc_consistency.py <doc-file> [--root <repo-root>]
@@ -30,51 +31,14 @@ import os
 import re
 import sys
 
+try:
+    from .path_utils import extract_markdown_link_targets, is_repo_reference
+except ImportError:
+    from path_utils import extract_markdown_link_targets, is_repo_reference
+
 
 # Prefixes whose absence is an error, not just a warning.
 ERROR_PREFIXES = ("scripts/", ".agents/")
-ROOT_FILE_NAMES = {"CMakeLists.txt", "Dockerfile", "LICENSE", "Makefile"}
-ROOT_FILE_SUFFIXES = {
-    ".cfg",
-    ".cmake",
-    ".conf",
-    ".ini",
-    ".json",
-    ".md",
-    ".rst",
-    ".sh",
-    ".toml",
-    ".txt",
-    ".xml",
-    ".yaml",
-    ".yml",
-}
-ROOT_DOTFILES = {
-    ".clang-format",
-    ".clang-tidy",
-    ".editorconfig",
-    ".env",
-    ".env.example",
-    ".gitattributes",
-    ".gitignore",
-}
-
-
-def is_root_file_candidate(candidate: str) -> bool:
-    """Return whether a bare token looks like a root-level repo file."""
-    if candidate in ROOT_FILE_NAMES or candidate in ROOT_DOTFILES:
-        return True
-
-    stem, suffix = os.path.splitext(candidate)
-    return bool(stem) and suffix in ROOT_FILE_SUFFIXES
-
-
-def is_repo_reference(candidate: str) -> bool:
-    """Return whether a backtick token should be checked against the repo."""
-    if candidate.startswith("http") or candidate.startswith("-") or " " in candidate:
-        return False
-
-    return "/" in candidate or is_root_file_candidate(candidate)
 
 
 def extract_filenames(content: str) -> list[str]:
@@ -85,6 +49,27 @@ def extract_filenames(content: str) -> list[str]:
         if is_repo_reference(candidate):
             filenames.add(candidate)
     return sorted(filenames)
+
+
+def extract_link_references(
+    content: str, doc_file: str, root: str
+) -> list[tuple[str, str]]:
+    """Extract local Markdown link targets and resolve them for existence checks."""
+    doc_dir = os.path.dirname(os.path.abspath(doc_file))
+    repo_root = os.path.abspath(root)
+    references: dict[str, str] = {}
+
+    for target in extract_markdown_link_targets(content):
+        full_path = os.path.abspath(os.path.join(doc_dir, target))
+        try:
+            in_repo = os.path.commonpath((repo_root, full_path)) == repo_root
+        except ValueError:
+            in_repo = False
+
+        reference = os.path.relpath(full_path, repo_root) if in_repo else target
+        references.setdefault(reference, full_path)
+
+    return sorted(references.items())
 
 
 def main() -> None:
@@ -102,12 +87,15 @@ def main() -> None:
     with open(args.doc_file, "r", encoding="utf-8") as f:
         content = f.read()
 
-    filenames = extract_filenames(content)
+    references: dict[str, str] = {
+        filename: os.path.join(root, filename)
+        for filename in extract_filenames(content)
+    }
+    references.update(extract_link_references(content, args.doc_file, root))
     errors: list[str] = []
     warnings: list[str] = []
 
-    for fname in filenames:
-        full = os.path.join(root, fname)
+    for fname, full in sorted(references.items()):
         if os.path.exists(full):
             continue
         is_error = any(fname.startswith(p) for p in ERROR_PREFIXES)
