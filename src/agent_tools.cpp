@@ -160,6 +160,19 @@ nlohmann::json build_script_result_json(const BuildScriptResult& result) {
     };
 }
 
+nlohmann::json apply_patch_result_to_json(const ApplyPatchResult& result) {
+    nlohmann::json response{
+        {"ok", result.ok},
+        {"match_count", result.match_count},
+        {"error", result.err},
+        {"reject_code", patch_reject_code_to_string(result.reject_code)}
+    };
+    if (result.patch_index >= 0) {
+        response["patch_index"] = result.patch_index;
+    }
+    return response;
+}
+
 std::vector<std::string> optional_string_array_arg(const ToolCall& cmd, const char* key) {
     if (!cmd.arguments.contains(key)) {
         return {};
@@ -622,11 +635,7 @@ ToolRegistry build_default_tool_registry() {
                 }
 
                 const auto result = apply_patch_batch(config.workspace_abs, path, patches);
-                return nlohmann::json{
-                    {"ok", result.ok},
-                    {"match_count", result.match_count},
-                    {"error", result.err}
-                };
+                return apply_patch_result_to_json(result);
             } else {
                 // Single mode: both old_text and new_text must be explicitly present
                 if (!has_old_text) {
@@ -658,11 +667,7 @@ ToolRegistry build_default_tool_registry() {
                 const std::string new_text = cmd.arguments.at("new_text").get<std::string>();
 
                 const auto result = apply_patch_single(config.workspace_abs, path, old_text, new_text);
-                return nlohmann::json{
-                    {"ok", result.ok},
-                    {"match_count", result.match_count},
-                    {"error", result.err}
-                };
+                return apply_patch_result_to_json(result);
             }
         }
     });

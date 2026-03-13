@@ -3,6 +3,20 @@
 #include <string>
 #include <vector>
 
+enum class PatchRejectCode {
+    None,
+    EmptyOldText,
+    FileReadFailure,
+    BinaryFile,
+    TruncatedFile,
+    NoMatch,
+    MultipleMatches,
+    InvalidBatchEntry,
+    WritebackFailure,
+};
+
+const char* patch_reject_code_to_string(PatchRejectCode code);
+
 /// Result returned by both apply_patch_single and apply_patch_batch.
 struct ApplyPatchResult {
     bool ok;
@@ -11,6 +25,14 @@ struct ApplyPatchResult {
     ///                   or total patch count on success.
     int match_count;
     std::string err;
+    /// On success (ok == true), this is PatchRejectCode::None.
+    /// On failure (ok == false), this is the primary categorized reason.
+    PatchRejectCode reject_code = PatchRejectCode::None;
+    /// For apply_patch_single: always -1.
+    /// For apply_patch_batch:  -1 on success, or on failures not tied to a
+    /// specific entry; otherwise the zero-based index of the first failing
+    /// patch entry.
+    int patch_index = -1;
 };
 
 /// A single (old_text -> new_text) replacement entry used in batch mode.

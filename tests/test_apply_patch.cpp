@@ -66,6 +66,8 @@ TEST_F(ApplyPatchTest, A1_SingleUniqueHitReplaces) {
     auto r = apply_patch_single(ws, "a.txt", "world", "there");
     EXPECT_TRUE(r.ok);
     EXPECT_EQ(r.match_count, 1);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::None);
+    EXPECT_EQ(r.patch_index, -1);
     EXPECT_EQ(read("a.txt"), "hello there");
 }
 
@@ -74,6 +76,8 @@ TEST_F(ApplyPatchTest, A2_OldTextNotFound_Fails) {
     auto r = apply_patch_single(ws, "a.txt", "goodbye", "there");
     EXPECT_FALSE(r.ok);
     EXPECT_EQ(r.match_count, 0);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::NoMatch);
+    EXPECT_EQ(r.patch_index, -1);
     EXPECT_EQ(read("a.txt"), "hello world");  // file unchanged
 }
 
@@ -82,6 +86,7 @@ TEST_F(ApplyPatchTest, A3_OldTextAppearsMultipleTimes_Fails) {
     auto r = apply_patch_single(ws, "a.txt", "abc", "xyz");
     EXPECT_FALSE(r.ok);
     EXPECT_GT(r.match_count, 1);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::MultipleMatches);
     EXPECT_EQ(read("a.txt"), "abc abc abc");  // file unchanged
 }
 
@@ -89,6 +94,8 @@ TEST_F(ApplyPatchTest, A4_OldTextEmpty_Fails) {
     write("a.txt", "hello");
     auto r = apply_patch_single(ws, "a.txt", "", "anything");
     EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.match_count, 0);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::EmptyOldText);
     EXPECT_NE(r.err.find("empty"), std::string::npos);
     EXPECT_EQ(read("a.txt"), "hello");
 }
@@ -161,6 +168,7 @@ TEST_F(ApplyPatchTest, B11_BinaryFile_Fails) {
     }
     auto r = apply_patch_single(ws, "bin.bin", std::string("\x00\x01", 2), "xy");
     EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::BinaryFile);
     EXPECT_FALSE(r.err.empty());
 }
 
@@ -173,6 +181,7 @@ TEST_F(ApplyPatchTest, B12_TruncatedRead_FailsAndFileUnchanged) {
 
     auto r = apply_patch_single(ws, "huge.txt", "zzz", "aaa");
     EXPECT_FALSE(r.ok) << "Truncated read must be rejected";
+    EXPECT_EQ(r.reject_code, PatchRejectCode::TruncatedFile);
     EXPECT_NE(r.err.find("truncat"), std::string::npos) << "Error must mention truncation";
     EXPECT_EQ(read("huge.txt"), original) << "File must be unchanged after truncated read";
 }
@@ -223,6 +232,9 @@ TEST_F(ApplyPatchTest, D16_BatchSecondPatchFails_FileUnchanged) {
     };
     auto r = apply_patch_batch(ws, "d.txt", patches);
     EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::NoMatch);
+    EXPECT_EQ(r.patch_index, 1);
+    EXPECT_EQ(r.match_count, 1);
     EXPECT_EQ(read("d.txt"), "aaa bbb ccc");  // unchanged
 }
 
@@ -253,6 +265,8 @@ TEST_F(ApplyPatchTest, D19_BatchEntryOldTextEmpty_Fails) {
     };
     auto r = apply_patch_batch(ws, "d.txt", patches);
     EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::InvalidBatchEntry);
+    EXPECT_EQ(r.patch_index, 0);
     EXPECT_EQ(read("d.txt"), "aaa");
 }
 
@@ -265,6 +279,8 @@ TEST_F(ApplyPatchTest, D20_BatchEntryMultipleMatches_Fails) {
     EXPECT_FALSE(r.ok);
     // batch match_count = completed patch count (0-based index of failure)
     EXPECT_EQ(r.match_count, 0);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::MultipleMatches);
+    EXPECT_EQ(r.patch_index, 0);
     EXPECT_EQ(read("d.txt"), "abc abc");
 }
 
@@ -276,6 +292,8 @@ TEST_F(ApplyPatchTest, D21_BatchEntryNoMatch_Fails) {
     auto r = apply_patch_batch(ws, "d.txt", patches);
     EXPECT_FALSE(r.ok);
     EXPECT_EQ(r.match_count, 0);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::NoMatch);
+    EXPECT_EQ(r.patch_index, 0);
     EXPECT_EQ(read("d.txt"), "hello");
 }
 
@@ -289,6 +307,7 @@ TEST_F(ApplyPatchTest, D22_BatchTruncatedRead_FailsFileUnchanged) {
     std::vector<PatchEntry> patches = {{"qqq", "rrr"}};
     auto r = apply_patch_batch(ws, "huge_batch.txt", patches);
     EXPECT_FALSE(r.ok) << "Truncated read must be rejected";
+    EXPECT_EQ(r.reject_code, PatchRejectCode::TruncatedFile);
     EXPECT_NE(r.err.find("truncat"), std::string::npos) << "Error must mention truncation";
     EXPECT_EQ(read("huge_batch.txt"), original) << "File must be unchanged after truncated read";
 }
@@ -315,6 +334,8 @@ TEST_F(ApplyPatchTest, D24_BatchFailureReportsCompletedPatchCountNotInnerMatchCo
     EXPECT_FALSE(r.ok);
     // Must be 0 (index of failing patch / completed count), NOT 2 (inner matches).
     EXPECT_EQ(r.match_count, 0);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::MultipleMatches);
+    EXPECT_EQ(r.patch_index, 0);
     EXPECT_NE(r.err.find("patch[0]"), std::string::npos);
     // File must remain unchanged.
     EXPECT_EQ(read("d.txt"), "dup dup end");
@@ -376,7 +397,10 @@ TEST_F(ApplyPatchToolTest, E25_ExecuteToolSinglePatch_Succeeds) {
     };
 
     std::string res = execute_tool(tc, config);
-    EXPECT_NE(res.find("\"ok\":true"), std::string::npos);
+    const json out = json::parse(res);
+    EXPECT_TRUE(out["ok"].get<bool>());
+    EXPECT_EQ(out["reject_code"], "none");
+    EXPECT_FALSE(out.contains("patch_index"));
     EXPECT_EQ(read_file("e.txt"), "foo baz");
 }
 
@@ -394,7 +418,10 @@ TEST_F(ApplyPatchToolTest, E26_ExecuteToolBatchPatch_Succeeds) {
     };
 
     std::string res = execute_tool(tc, config);
-    EXPECT_NE(res.find("\"ok\":true"), std::string::npos);
+    const json out = json::parse(res);
+    EXPECT_TRUE(out["ok"].get<bool>());
+    EXPECT_EQ(out["reject_code"], "none");
+    EXPECT_FALSE(out.contains("patch_index"));
     EXPECT_EQ(read_file("e.txt"), "ALPHA beta GAMMA");
 }
 
@@ -436,9 +463,11 @@ TEST_F(ApplyPatchToolTest, E29_SingleModeMissingNewText_Fails) {
     };
 
     std::string res = execute_tool(tc, config);
-    EXPECT_NE(res.find("\"ok\":false"), std::string::npos);
+    const json out = json::parse(res);
+    EXPECT_FALSE(out["ok"].get<bool>());
     // Must NOT silently treat as deletion
-    EXPECT_NE(res.find("new_text"), std::string::npos);
+    EXPECT_NE(out["error"].get<std::string>().find("new_text"), std::string::npos);
+    EXPECT_FALSE(out.contains("reject_code"));
     // File must be unchanged
     EXPECT_EQ(read_file("e.txt"), "content");
 }
@@ -494,15 +523,18 @@ TEST_F(ApplyPatchTest, F33_DistinctErrorMessages) {
     auto no_match = apply_patch_single(ws, "f.txt", "NOTHERE", "x");
     EXPECT_FALSE(no_match.ok);
     EXPECT_EQ(no_match.match_count, 0);
+    EXPECT_EQ(no_match.reject_code, PatchRejectCode::NoMatch);
 
     // multiple match
     auto multi_match = apply_patch_single(ws, "f.txt", "hello", "x");
     EXPECT_FALSE(multi_match.ok);
     EXPECT_GT(multi_match.match_count, 1);
+    EXPECT_EQ(multi_match.reject_code, PatchRejectCode::MultipleMatches);
 
     // empty old_text
     auto empty_old = apply_patch_single(ws, "f.txt", "", "x");
     EXPECT_FALSE(empty_old.ok);
+    EXPECT_EQ(empty_old.reject_code, PatchRejectCode::EmptyOldText);
 
     // Verify the three errors are distinguishable
     EXPECT_NE(no_match.err, multi_match.err);
@@ -522,7 +554,9 @@ TEST_F(ApplyPatchToolTest, F34_MissingNewText_Not_SameAs_EmptyNewText) {
         // new_text deliberately absent
     };
     std::string missing_res = execute_tool(missing_tc, config);
-    EXPECT_NE(missing_res.find("\"ok\":false"), std::string::npos);
+    const json missing_out = json::parse(missing_res);
+    EXPECT_FALSE(missing_out["ok"].get<bool>());
+    EXPECT_FALSE(missing_out.contains("reject_code"));
     EXPECT_EQ(read_file("f.txt"), "original content");  // file unchanged
 
     // Case B: new_text is explicit empty string -> succeeds (deletion)
@@ -534,8 +568,50 @@ TEST_F(ApplyPatchToolTest, F34_MissingNewText_Not_SameAs_EmptyNewText) {
         {"new_text", ""}
     };
     std::string empty_res = execute_tool(empty_tc, config);
-    EXPECT_NE(empty_res.find("\"ok\":true"), std::string::npos);
+    const json empty_out = json::parse(empty_res);
+    EXPECT_TRUE(empty_out["ok"].get<bool>());
+    EXPECT_EQ(empty_out["reject_code"], "none");
     EXPECT_EQ(read_file("f.txt"), "");  // deleted
+}
+
+TEST_F(ApplyPatchToolTest, F35_ToolRejectCodeForSinglePatchFailure) {
+    write_file("f.txt", "hello world");
+
+    ToolCall tc;
+    tc.name = "apply_patch";
+    tc.arguments = {
+        {"path", "f.txt"},
+        {"old_text", "NOTHERE"},
+        {"new_text", "x"}
+    };
+
+    const json out = json::parse(execute_tool(tc, config));
+    EXPECT_FALSE(out["ok"].get<bool>());
+    EXPECT_EQ(out["reject_code"], "no_match");
+    EXPECT_EQ(out["match_count"], 0);
+    EXPECT_FALSE(out.contains("patch_index"));
+    EXPECT_EQ(read_file("f.txt"), "hello world");
+}
+
+TEST_F(ApplyPatchToolTest, F36_ToolRejectCodeAndIndexForBatchFailure) {
+    write_file("f.txt", "alpha beta gamma");
+
+    ToolCall tc;
+    tc.name = "apply_patch";
+    tc.arguments = {
+        {"path", "f.txt"},
+        {"patches", json::array({
+            {{"old_text", "alpha"}, {"new_text", "ALPHA"}},
+            {{"old_text", "MISSING"}, {"new_text", "X"}}
+        })}
+    };
+
+    const json out = json::parse(execute_tool(tc, config));
+    EXPECT_FALSE(out["ok"].get<bool>());
+    EXPECT_EQ(out["reject_code"], "no_match");
+    EXPECT_EQ(out["patch_index"], 1);
+    EXPECT_EQ(out["match_count"], 1);
+    EXPECT_EQ(read_file("f.txt"), "alpha beta gamma");
 }
 
 // ---------------------------------------------------------------------------
@@ -667,6 +743,7 @@ TEST_F(ApplyPatchTest, G40_SingleBinaryFile_ReturnsBinarySpecificError) {
 
     auto r = apply_patch_single(ws, "g_bin.bin", "ab", "xy");
     EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::BinaryFile);
     EXPECT_NE(r.err.find("binary"), std::string::npos)
         << "Expected 'binary' in error message, got: " << r.err;
 }
@@ -683,6 +760,7 @@ TEST_F(ApplyPatchTest, G41_BatchBinaryFile_ReturnsBinarySpecificError) {
     std::vector<PatchEntry> patches = {{"ab", "xy"}};
     auto r = apply_patch_batch(ws, "g_bin2.bin", patches);
     EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.reject_code, PatchRejectCode::BinaryFile);
     EXPECT_NE(r.err.find("binary"), std::string::npos)
         << "Expected 'binary' in error message, got: " << r.err;
 }
