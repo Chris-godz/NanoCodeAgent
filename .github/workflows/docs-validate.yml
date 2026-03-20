@@ -7,21 +7,159 @@ on:
     branches: [ "main" ]
 
 jobs:
-  validate:
+  build-and-test:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v6.0.2
         with:
-          python-version: '3.10'
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libcurl4-openssl-dev
+
+      - name: Build and test
+        run: ./build.sh test
+
+      - name: Archive build tree
+        run: tar -czf docs-validate-build-tree.tar.gz build
+
+      - name: Upload build tree artifact
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: docs-validate-build-tree
+          path: docs-validate-build-tree.tar.gz
+          if-no-files-found: error
+
+  validate:
+    needs: [build-and-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Download build tree artifact
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: docs-validate-build-tree
+          path: .
+
+      - name: Restore build tree
+        run: tar -xzf docs-validate-build-tree.tar.gz
+
+      - name: Verify build tree restored
+        run: |
+          test -d build
+          test -f build/CTestTestfile.cmake
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: '20'
+
+      - name: Check docgen environment bootstrap prerequisites
+        run: bash scripts/docgen/setup.sh
+
+      - name: Install Playwright Chromium system dependencies
+        run: |
+          python3 -m venv /tmp/pw-action
+          /tmp/pw-action/bin/pip install -q playwright
+          sudo /tmp/pw-action/bin/playwright install-deps chromium
+
       - name: Run documentation structure checks
         run: python3 scripts/docs/validate_docs.py
-      - name: Install mdBook
-        uses: peaceiris/actions-mdbook@v2
+
+      - name: Run docgen regression tests
+        run: python3 -m unittest tests.test_docgen_verify tests.test_docgen_verify_consistency_links tests.test_docgen_change_impact tests.test_docgen_e2e tests.test_docgen_e2e_loop tests.test_docgen_style_module
+
+      # unittest runs run_docgen_e2e_closed.sh (no codex) which Step 0 deletes docs/generated/diagram_specs;
+      # restore committed CI mirror immediately before aggregate verify.
+      - name: Restore CI diagram specs for run_verify_report
+        run: |
+          mkdir -p docs/generated/diagram_specs
+          cp -r tests/fixtures/ci_diagram_specs/* docs/generated/diagram_specs/
+
+      - name: Run full target-doc verify (run_verify_report.py + fixture scope)
+        id: target_doc_verify
+        run: |
+          mkdir -p docs/generated
+          python3 scripts/docgen/run_verify_report.py \
+            --root . \
+            --scope tests/fixtures/ci_doc_scope.json \
+            --verify-paths-ignore-repo-prefix docs/generated/ \
+            --report-json docs/generated/verify_report.json \
+            --report-md docs/generated/docgen_validation_report.md
+
+      - name: Upload docs verify diagnostics (JSON + MD)
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
         with:
-          mdbook-version: '0.4.36'
+          name: docs-verify-diagnostics
+          path: |
+            docs/generated/verify_report.json
+            docs/generated/docgen_validation_report.md
+          if-no-files-found: ignore
+
+      - name: Diagnose verify failure
+        if: failure() && steps.target_doc_verify.outcome == 'failure'
+        run: |
+          python3 << 'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          p = Path("docs/generated/verify_report.json")
+          if not p.is_file():
+              print("::warning::docs/generated/verify_report.json not found.")
+              sys.exit(0)
+          d = json.loads(p.read_text(encoding="utf-8"))
+          print("=== blocking_passed ===")
+          print(d.get("blocking_passed"))
+          print("=== failed blocking checks (file, checker, output excerpt) ===")
+          for row in d.get("per_file", []):
+              fn = row.get("file", "")
+              for c in row.get("checks", []):
+                  if c.get("blocking") and not c.get("passed"):
+                      print(f"--- file: {fn}  checker: {c.get('name')} ---")
+                      ar = (c.get("artifact_report") or "").strip()
+                      if ar:
+                          print(f"ARTIFACT_REPORT: {ar}")
+                      raw = c.get("output") or ""
+                      excerpt = raw[:2000]
+                      print(excerpt)
+                      if len(raw) > 2000:
+                          print("... [log excerpt truncated to 2000 chars]")
+          if d.get("blocking_issues"):
+              print("=== blocking_issues (summary) ===")
+              for issue in d.get("blocking_issues", [])[:30]:
+                  print(issue)
+          PY
+
+      - name: Install mdBook
+        env:
+          MDBOOK_VERSION: '0.4.36'
+        run: |
+          curl -fsSL "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/mdbook.tar.gz
+          tar -xzf /tmp/mdbook.tar.gz -C /tmp
+          sudo install /tmp/mdbook /usr/local/bin/mdbook
+          mdbook --version
+
       - name: Build mdBook
         run: mdbook build book
+
+      - name: Upload Mermaid diagram artifacts
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: diagram-artifacts
+          path: docs/generated/diagram_artifacts/
+          if-no-files-found: ignore

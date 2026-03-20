@@ -122,6 +122,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv_test
 env/
 venv/
 ENV/
@@ -161,8 +162,13 @@ test_local.ini
 my_relative_ws/
 test_conf.ini
 
+# Docgen pipeline run outputs (regenerated each run; do not commit)
+docs/generated/
+
 # mdBook build output
 book/book/
 
 # Local git worktrees created for vendored submodules
 3rd-party/*.worktrees/
+
+tmp/

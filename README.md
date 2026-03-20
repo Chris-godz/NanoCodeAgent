@@ -15,7 +15,17 @@
 
 NanoCodeAgent is a teaching-oriented C++ code agent runtime focused on deterministic execution, workspace safety, and incremental capability building.
 
-It is intentionally positioned as a local, controlled runtime rather than a cloud-first black-box automation platform. The current repository focuses on building the core agent loop, tool safety boundaries, and a development workflow that can later dogfood stronger coding and documentation agents.
+## Why This Repo Exists
+
+This repository exists to make agent behavior inspectable instead of magical. The runtime keeps task execution local and bounded, while the newer documentation automation path applies the same discipline to README and mdBook updates: collect facts first, decide scope explicitly, then verify what changed.
+
+## Big Picture
+
+The repository now has two complementary tracks. The runtime track turns a prompt into a bounded local execution loop with explicit tool policy, workspace limits, and fail-fast behavior. The documentation track turns a code diff into change facts, scope decisions, grounded doc updates, blocking verification, and review evidence for `README.md`, `README_zh.md`, and `book/src/`.
+
+## Main Flows
+
+For coding work, a task enters through CLI and config setup, flows through the agent loop and LLM bridge, and only reaches tool executors after policy and workspace checks. For documentation work, `scripts/docgen/change_facts.py` captures what changed, AI scope decision limits what may be edited, `scripts/docgen/reference_context.py` gathers evidence, the writer updates approved docs in place, and the verify/review loop checks paths, links, diagram specs, Mermaid rendering, and review feedback before a summary is rendered.
 
 ## Current Status
 
@@ -26,15 +36,34 @@ It is intentionally positioned as a local, controlled runtime rather than a clou
 - HTTP / LLM integration and SSE streaming
 - Safety-bounded `read`, `write`, and `bash` tools
 - Test infrastructure and deterministic mdBook validation
+- Change-aware documentation automation for README and book chapters, including scope decisions, reference context, blocking verify, and review/rework evidence
 
-For documentation, the main branch now keeps only deterministic mdBook build and structure checks. AI-generated documentation is not part of the mainline workflow at this stage.
+## Documentation Automation
+
+Documentation automation follows the same local-first, bounded pattern as the runtime. The writer stage only edits approved homepage and book targets, while generated JSON, diagram specs, and rendered diagram artifacts stay under `docs/generated/` as handoff and review evidence.
+
+### What You Usually Do
+
+Run `bash scripts/docgen/setup.sh` first to confirm `python3`, `git`, `npm`, and Python venv support are present. Use `bash scripts/docgen/run_change_impact.sh` when you only need an impact report. Use `bash scripts/docgen/run_docgen_e2e_closed.sh` when you want the full change-facts -> scope -> reference-context -> doc-update -> verify/review loop. That closed loop also requires the Codex CLI in `PATH`. In GitHub Actions, `.github/workflows/docs-validate.yml` reuses the same setup and verify path for PRs, while `.github/workflows/core-ci.yml` exposes the same closed-loop entrypoint (job `full-doc-automation`) behind `workflow_dispatch` after build/test, with `OPENAI_API_KEY`.
+
+### Boundaries And Pitfalls
+
+The target docs remain narrow: `README.md`, `README_zh.md`, and Markdown under `book/src/`. `docs/generated/` contains scope decisions, verify reports, diagram specs, rendered SVG/PNG artifacts, and run evidence, but those are not destination docs. Blocking verification currently covers paths, links, diagram specs, and Mermaid render correctness; command checks still act as supporting signals rather than merge blockers. If you add or reorder Mermaid blocks in the book, update `tests/fixtures/ci_diagram_specs/` so PR verification still mirrors the expected spec layout.
+
+### Dive Deeper
+
+- [book/src/01-overview.md](book/src/01-overview.md)
+- [book/src/06-documentation-automation.md](book/src/06-documentation-automation.md)
+- [scripts/docgen/README.md](scripts/docgen/README.md)
+- [scripts/docgen/tasks/README.md](scripts/docgen/tasks/README.md)
+- [docs/docgen_e2e_flow.md](docs/docgen_e2e_flow.md)
 
 ## Quick Start
 
 ```bash
 git submodule update --init --recursive
-./build.sh        # build in Debug mode
-./build.sh test   # build and run all tests
+./build.sh
+./build.sh test
 ```
 
 ## Roadmap
@@ -85,12 +114,15 @@ Goal: decouple reusable workflows into Skills.
 
 This track follows a local validation first -> change-aware updates -> stronger verification and review -> CI readiness progression.
 
+**Current focus:** CI-ready + GitHub Actions — reproduce the same docgen entrypoints in Actions as locally (full closed loop is manual `workflow_dispatch`, not a second-class pipeline).
+
 - [x] Milestone 1: build the local-first docgen scaffold with rules, repo-scoped skills, deterministic scripts, generated outputs, and basic verification
-- [ ] Milestone 2: map code changes to documentation impact and classify whether updates are required, optional, or unnecessary
-- [ ] Milestone 3: connect change-impact analysis to incremental updates for README, tutorials, and getting-started documentation
-- [ ] Milestone 4: strengthen verification for commands, paths, configs, environment references, and other doc-to-repo consistency checks
-- [ ] Milestone 5: add a review stage focused on clarity, teaching quality, structure, and completeness before accepting generated docs
-- [ ] Milestone 6: package stable local workflows and prepare the docgen pipeline for future CI / GitHub Actions integration
+- [x] Milestone 2: map code changes to documentation impact and classify whether updates are required, optional, or unnecessary
+- [x] Milestone 3: connect change-impact analysis to incremental updates for README, tutorials, and getting-started documentation
+- [x] Book rewrite wave 1 (mdBook teaching pass): treated complete for current planning; not the active backlog item
+- [ ] Milestone 4: strengthen verification for commands, paths, configs, environment references, and other doc-to-repo consistency checks — **deferred / low priority** (do not block CI-ready)
+- [x] Milestone 5: add a review stage focused on clarity, teaching quality, structure, and completeness before accepting generated docs
+- [x] Milestone 6: CI-ready: `core-ci` + docs validation + manual full `run_docgen_e2e_closed.sh` on GitHub Actions (see `.github/workflows/docs-validate.yml` and `.github/workflows/core-ci.yml` `workflow_dispatch`)
 
 ## Future Directions
 

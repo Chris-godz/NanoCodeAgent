@@ -16,29 +16,29 @@ Produce or update teaching-oriented documentation (tutorials, guides, README sec
 
 # Inputs
 
-- Repository understanding summary (`docs/generated/repo_understanding_summary.md`).
-- Change impact summary (`docs/generated/change_impact_summary.md`), if applicable.
-- Target document to update (existing content).
-- Adjacent documents and examples for context.
-- Relevant document template from `docs/templates/`.
+- **Doc scope decision**: `docs/generated/doc_scope_decision.json` (update_readme, update_book, book_dirs_or_chapters, directory_actions).
+- **Reference context**: `docs/generated/reference_context.json` (examples, tests, templates, source_paths, existing_doc_excerpts). Reference only; target docs are README and book only.
+- Optionally: a generated repo-understanding summary artifact, plus `docs/generated/change_facts.json`.
 
 # Required Steps
 
-1. Read the target document and its adjacent context.
-2. Read the repo understanding and change impact summaries.
-3. Select the appropriate template from `docs/templates/`.
-4. Produce an outline before writing prose:
-   - Section headings and key points per section.
-5. Write each section, grounding every claim in source code or test evidence.
-6. Add or update code examples, ensuring they reflect current APIs.
-7. Add FAQ / common pitfalls section where relevant.
-8. Unify terminology and style with existing docs.
+1. Read doc_scope_decision.json: which target docs, and whether `directory_actions` is `"add"`, `"delete"`, `"merge"`, `"reorg"`, or `"none"`.
+2. Read reference_context.json for facts and existing doc excerpts; do not treat it as a list of target docs.
+3. Read current README.md and in-scope book/src files (and `book/src/SUMMARY.md` if you will add or remove chapters).
+4. If the target chapter includes Mermaid diagrams or clearly needs one, read `docs/documentation-collaboration-style.md`, `docs/templates/diagram-gallery.md`, and `docs/templates/diagram-spec-template.md`.
+5. For any in-scope chapter that contains a key Mermaid figure, create or refresh a diagram spec artifact under `docs/generated/diagram_specs/` using a slugged doc-path directory, for example `docs/generated/diagram_specs/book__src__01-overview/block-01.md`. Do this before writing or revising Mermaid, and also when you keep an existing figure but rely on it in the updated chapter. The spec is mandatory writer output, not hidden reasoning.
+6. Mermaid diagrams must pass render verification. Treat render errors as blocking verify failures, not reviewer polish items.
+7. `scripts/docgen/verify_mermaid.py` now emits rendered SVG/PNG artifacts under `docs/generated/diagram_artifacts/`; these are required inputs for visual review.
+8. **If scope says add new structure** (`directory_actions` is `"add"`): Create the new chapter file(s) under book/src, update SUMMARY.md to list them, and **write** the new chapter content from the change and reference context (what the new module/capability does). Do not only edit existing files — add new structure when the change introduced new modules or capabilities.
+9. **If scope says only update existing**: Edit README.md and/or the listed book chapters in place.
+10. If scope says delete/merge/reorg, adjust book content and SUMMARY.md accordingly.
+11. Ground every claim in reference context or source; do not fabricate CLI/config/paths. Do not write to `docs/generated/candidates/`.
+12. In the E2E writer stage, stop after drafting the target docs and required diagram specs. Do not run the verifier scripts yourself; the pipeline runs verify next.
 
 # Output Format
 
-- Updated document written in-place or to `docs/generated/` for review.
-- The document should follow the selected template structure.
-- Each section should be self-contained but link to related docs where appropriate.
+- **README.md and book/src/**\*.md only. No output under docs/generated/candidates/.
+- When scope decision says **add**: create new .md under book/src and add entry to SUMMARY.md; write the new chapter. When scope says **none** or only existing paths: in-place updates. When scope says delete/merge/reorg: adjust structure and SUMMARY.md.
 
 # Constraints
 
@@ -46,6 +46,9 @@ Produce or update teaching-oriented documentation (tutorials, guides, README sec
 - Do NOT rewrite sections unrelated to the current change unless necessary for coherence.
 - Preserve existing narrative structure when the change is incremental.
 - Mark uncertain claims with `<!-- TODO: verify -->` comments.
+- When editing diagrams, prefer small corrective changes over whole-chapter rewrites: let the diagram spec decide one-diagram-one-idea, split-vs-single, and what details stay out of the figure.
+- Do not use a hard node-count rule. If a diagram remains clear, grouped, and easy to read, a larger node set is acceptable; when that clarity breaks, split the diagram instead of compressing more detail into one figure.
+- Reviewability matters as much as renderability: diagram labels should stay short and scannable, long explanation should move to the caption, and the rendered screenshot should read like a formal document figure rather than a debug sketch.
 
 # Failure Modes
 
@@ -56,8 +59,8 @@ Produce or update teaching-oriented documentation (tutorials, guides, README sec
 
 # Validation Handoff
 
-- Run `scripts/docgen/verify_paths.py` to confirm all referenced paths exist.
-- Run `scripts/docgen/verify_links.py` to confirm internal links resolve.
+- Run `scripts/docgen/run_verify_report.py` for the in-scope target set, or run `scripts/docgen/verify_paths.py` / `scripts/docgen/verify_links.py` one target doc per invocation. Do not pass multiple markdown targets to a verifier that expects a single `doc_file`.
+- Run `scripts/docgen/verify_mermaid.py` when target docs contain Mermaid diagrams, then keep the emitted artifact report and PNGs under `docs/generated/diagram_artifacts/` available for review (for example `docs/generated/diagram_artifacts/book__src__01-overview/report.json`).
 - Pass the output to `docgen-fact-check` for factual verification.
 
 # Dependencies

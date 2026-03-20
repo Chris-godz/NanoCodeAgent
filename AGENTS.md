@@ -86,10 +86,16 @@ If source code conflicts with old documentation, source code wins.
 - If the `## Documentation Automation Rules` heading is not found, **fail explicitly** with a clear error message. Do not silently fall back to reading generic engineering rules.
 - Generated documentation artifacts must use **repository-relative paths** (e.g., `src/main.cpp`, `include/agent_loop.hpp`). Never emit absolute paths like `/home/...` in any output under `docs/generated/`.
 
+### Writing style and clarity
+
+- Writing and review must follow the **documentation collaboration style** defined in [docs/documentation-collaboration-style.md](docs/documentation-collaboration-style.md).
+- When **writing** target docs (README, book): use the expression order and priorities from the overview-writer layer (Why → Big Picture → Main Flow → Module Roles → What you usually do → Boundaries → Dive deeper). Do not lead with commands or script names; build the reader’s mental model first.
+- When **reviewing**: besides factual and structural checks, assess **understanding effect** per that document (map before details, narrative over inventory, design intent explained, skimmable with dive-deeper entry). Use the doc-clarity-reviewer criteria; do not reduce review to format or spelling only.
+
 ### Responsibility Split
 
 - **Scripts** (`scripts/docgen/`): deterministic work — scan directories, check links, verify paths, extract CLI help.
-- **Skills** (`.agents/skills/docgen-*/`): workflow orchestration knowledge — when to run repo understanding, how to assess change impact, how to structure a tutorial update, how to review.
+- **Skills** (`.agents/skills/docgen-*/`, `doc-clarity-reviewer`): workflow orchestration and writing style — when to run repo understanding, how to assess change impact, how to structure a tutorial update, how to review; **docgen-overview-writer** for expression order and priorities, **doc-clarity-reviewer** for clarity and understanding-effect review.
 - **Model**: understanding, synthesis, organization, and writing.
 
 ## AI Customization Layout
@@ -98,4 +104,4 @@ If source code conflicts with old documentation, source code wins.
 - `.github/copilot-instructions.md`: Copilot workspace-wide guidance.
 - `.github/instructions/*.instructions.md`: file-pattern specific Copilot deltas that should not duplicate `AGENTS.md`.
 - `.agents/skills/<skill-name>/SKILL.md`: optional reusable workflows only. Do not store always-on coding standards here.
-- Active repository skills: `docgen-repo-understanding`, `docgen-change-impact`, `docgen-tutorial-update`, `docgen-fact-check`, `docgen-reviewer`.
+- Active repository skills: `docgen-repo-understanding`, `docgen-change-impact`, `docgen-tutorial-update`, `docgen-fact-check`, `docgen-reviewer`, `docgen-overview-writer`, `doc-clarity-reviewer`.

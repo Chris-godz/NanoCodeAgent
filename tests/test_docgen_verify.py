@@ -165,6 +165,36 @@ class TestVerifyPaths(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("space dir/missing.md", r.stdout + r.stderr)
 
+    def test_ignore_repo_prefix_skips_generated_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc_path = os.path.join(tmp, "README.md")
+            with open(doc_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "# Temp Doc\n\n"
+                    "Generated report: `docs/generated/missing.json`\n\n"
+                    "[Evidence](docs/generated/evidence.json)\n"
+                )
+
+            failing = run_script("verify_paths.py", doc_path, "--root", tmp)
+            self.assertNotEqual(failing.returncode, 0)
+            self.assertIn(
+                "docs/generated/missing.json", failing.stdout + failing.stderr
+            )
+
+            passing = run_script(
+                "verify_paths.py",
+                doc_path,
+                "--root",
+                tmp,
+                "--ignore-repo-prefix",
+                "docs/generated/",
+            )
+            self.assertEqual(
+                passing.returncode,
+                0,
+                f"stdout: {passing.stdout}\nstderr: {passing.stderr}",
+            )
+
 
 class TestVerifyLinks(unittest.TestCase):
     def test_good_doc_passes(self):
@@ -257,6 +287,49 @@ class TestVerifyCommands(unittest.TestCase):
             REPO_ROOT,
         )
         self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}\nstderr: {r.stderr}")
+
+
+class TestVerifyDiagramSpecs(unittest.TestCase):
+    def test_doc_without_mermaid_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = os.path.join(tmp, "book", "src", "plain.md")
+            os.makedirs(os.path.dirname(doc), exist_ok=True)
+            with open(doc, "w", encoding="utf-8") as f:
+                f.write("# Plain\n\nNo diagrams.\n")
+            r = run_script("verify_diagram_specs.py", doc, "--root", tmp)
+            self.assertEqual(r.returncode, 0, f"stdout: {r.stdout}\nstderr: {r.stderr}")
+
+    def test_missing_diagram_spec_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = os.path.join(tmp, "book", "src", "stream.md")
+            os.makedirs(os.path.dirname(doc), exist_ok=True)
+            with open(doc, "w", encoding="utf-8") as f:
+                f.write("# Stream\n\n```mermaid\nflowchart LR\n    A --> B\n```\n")
+            r = run_script("verify_diagram_specs.py", doc, "--root", tmp)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn(
+                "missing diagram spec artifact", (r.stdout + r.stderr).lower()
+            )
+
+    def test_matching_diagram_spec_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = os.path.join(tmp, "book", "src", "stream.md")
+            os.makedirs(os.path.dirname(doc), exist_ok=True)
+            with open(doc, "w", encoding="utf-8") as f:
+                f.write("# Stream\n\n```mermaid\nflowchart LR\n    A --> B\n```\n")
+            spec = os.path.join(
+                tmp,
+                "docs",
+                "generated",
+                "diagram_specs",
+                "book__src__stream",
+                "block-01.md",
+            )
+            os.makedirs(os.path.dirname(spec), exist_ok=True)
+            with open(spec, "w", encoding="utf-8") as f:
+                f.write("# Diagram Spec\n")
+            r = run_script("verify_diagram_specs.py", doc, "--root", tmp)
+            self.assertEqual(r.returncode, 0, f"stdout: {r.stdout}\nstderr: {r.stderr}")
 
     def test_console_transcript_passes(self):
         r = run_script(

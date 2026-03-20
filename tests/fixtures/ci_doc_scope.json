@@ -1,0 +1,16 @@
+{
+  "update_readme": true,
+  "update_book": true,
+  "approved_targets": [
+    "README.md",
+    "README_zh.md",
+    "book/src/SUMMARY.md",
+    "book/src/01-overview.md",
+    "book/src/02-cli-config-workspace.md",
+    "book/src/03-http-llm-streaming.md",
+    "book/src/04-tools-and-safety.md",
+    "book/src/05-testing.md",
+    "book/src/06-documentation-automation.md",
+    "book/src/99-changelog.md"
+  ]
+}

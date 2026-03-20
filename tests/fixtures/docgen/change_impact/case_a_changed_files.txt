@@ -1,0 +1,2 @@
+tests/test_agent_loop_limits.cpp
+tests/test_cli.cpp

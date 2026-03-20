@@ -1,0 +1,145 @@
+# Core CI: build/test on PR/push; on workflow_dispatch, run full doc automation after build (same run).
+# Full doc job uses the same entry as local: scripts/docgen/run_docgen_e2e_closed.sh (requires OPENAI_API_KEY).
+
+name: Core CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      diff_ref:
+        description: "Git ref passed to change_facts.py as --ref (e.g. HEAD~1, main)"
+        required: false
+        default: "HEAD~1"
+      docgen_files_list_path:
+        description: "Optional repo-relative path to a newline-separated file list for change_facts --files (overrides diff_ref when set)"
+        required: false
+        default: ""
+
+concurrency:
+  group: core-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libcurl4-openssl-dev
+
+      - name: Build and test
+        run: ./build.sh test
+
+      - name: Archive build tree
+        run: tar -czf ci-build-tree.tar.gz build
+
+      - name: Upload CI build tree artifact
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: ci-build-tree
+          path: ci-build-tree.tar.gz
+          if-no-files-found: error
+
+  full-doc-automation:
+    needs: [build-and-test]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Download CI build tree artifact
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: ci-build-tree
+          path: .
+
+      - name: Restore build tree
+        run: tar -xzf ci-build-tree.tar.gz
+
+      - name: Verify build tree restored
+        run: |
+          test -d build
+          test -f build/CTestTestfile.cmake
+
+      - name: Require OpenAI API key
+        run: |
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::Set repository secret OPENAI_API_KEY for Codex CLI."
+            exit 1
+          fi
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v6.3.0
+        with:
+          node-version: "20"
+
+      - name: Cache pip
+        uses: actions/cache@v5.0.4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-docgen-${{ hashFiles('scripts/docgen/**/*.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-docgen-
+
+      - name: Cache npm
+        uses: actions/cache@v5.0.4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-global-${{ hashFiles('.github/workflows/core-ci.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-global-
+
+      - name: Check docgen prerequisites
+        run: bash scripts/docgen/setup.sh
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+
+      - name: Run docgen closed loop (same as local)
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REF: ${{ inputs.diff_ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p docs/generated
+          if [ -n "${{ inputs.docgen_files_list_path }}" ]; then
+            export DOCGEN_FILES="${GITHUB_WORKSPACE}/${{ inputs.docgen_files_list_path }}"
+            if [ ! -f "$DOCGEN_FILES" ]; then
+              echo "::error::DOCGEN_FILES list not found: $DOCGEN_FILES"
+              exit 1
+            fi
+          fi
+          set -o pipefail
+          bash scripts/docgen/run_docgen_e2e_closed.sh 2>&1 | tee docs/generated/e2e_run.log
+
+      - name: Upload docgen artifacts
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: docgen-generated-${{ github.run_id }}
+          path: |
+            docs/generated/
+          if-no-files-found: ignore
