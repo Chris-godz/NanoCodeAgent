@@ -12,17 +12,38 @@ nlohmann::json make_registry_error(const std::string& message) {
     };
 }
 
-nlohmann::json make_approval_blocked_result(const ToolDescriptor& descriptor) {
+nlohmann::json missing_approvals_for(const ToolDescriptor& descriptor, const AgentConfig& config) {
+    nlohmann::json missing = nlohmann::json::array();
+    if (descriptor.mutates_repository_state && !config.allow_mutating_tools) {
+        missing.push_back("mutating");
+    }
+    if (descriptor.can_execute_repo_controlled_code && !config.allow_execution_tools) {
+        missing.push_back("execution");
+    }
+    return missing;
+}
+
+nlohmann::json make_approval_blocked_result(const ToolDescriptor& descriptor, const AgentConfig& config) {
+    const bool requires_mutating = descriptor.mutates_repository_state;
+    const bool requires_execution = descriptor.can_execute_repo_controlled_code;
+    const nlohmann::json missing = missing_approvals_for(descriptor, config);
+
     std::string error = "Tool execution requires approval under the current policy.";
-    switch (descriptor.category) {
-        case ToolCategory::Mutating:
-            error = "Mutating tool execution is blocked by default. Enable allow_mutating_tools, set NCA_ALLOW_MUTATING_TOOLS=1, or pass --allow-mutating-tools.";
-            break;
-        case ToolCategory::Execution:
-            error = "Execution tool use is blocked by default. Enable allow_execution_tools, set NCA_ALLOW_EXECUTION_TOOLS=1, or pass --allow-execution-tools.";
-            break;
-        case ToolCategory::ReadOnly:
-            break;
+    if (requires_mutating && requires_execution &&
+        missing == nlohmann::json::array({"mutating", "execution"})) {
+        error =
+            "Tool execution is blocked by default because this tool both mutates repository state and can "
+            "execute repository-controlled code. Enable allow_mutating_tools, set NCA_ALLOW_MUTATING_TOOLS=1, "
+            "or pass --allow-mutating-tools, and enable allow_execution_tools, set "
+            "NCA_ALLOW_EXECUTION_TOOLS=1, or pass --allow-execution-tools.";
+    } else if (requires_mutating && !config.allow_mutating_tools) {
+        error =
+            "Mutating tool execution is blocked by default. Enable allow_mutating_tools, set "
+            "NCA_ALLOW_MUTATING_TOOLS=1, or pass --allow-mutating-tools.";
+    } else if (requires_execution && !config.allow_execution_tools) {
+        error =
+            "Execution tool use is blocked by default. Enable allow_execution_tools, set "
+            "NCA_ALLOW_EXECUTION_TOOLS=1, or pass --allow-execution-tools.";
     }
 
     return nlohmann::json{
@@ -31,6 +52,9 @@ nlohmann::json make_approval_blocked_result(const ToolDescriptor& descriptor) {
         {"tool", descriptor.name},
         {"category", tool_category_to_string(descriptor.category)},
         {"requires_approval", descriptor.requires_approval},
+        {"requires_mutating_approval", requires_mutating},
+        {"requires_execution_approval", requires_execution},
+        {"missing_approvals", missing},
         {"error", error}
     };
 }
@@ -50,15 +74,7 @@ bool tool_execution_allowed(const ToolDescriptor& descriptor, const AgentConfig&
         return true;
     }
 
-    switch (descriptor.category) {
-        case ToolCategory::ReadOnly:
-            return true;
-        case ToolCategory::Mutating:
-            return config.allow_mutating_tools;
-        case ToolCategory::Execution:
-            return config.allow_execution_tools;
-    }
-    return false;
+    return missing_approvals_for(descriptor, config).empty();
 }
 
 } // namespace
@@ -89,7 +105,7 @@ bool ToolRegistry::register_tool(ToolDescriptor descriptor, std::string* err) {
         return false;
     }
 
-    if (descriptor.category == ToolCategory::ReadOnly) {
+    if (!descriptor.mutates_repository_state && !descriptor.can_execute_repo_controlled_code) {
         descriptor.requires_approval = false;
     }
 
@@ -115,7 +131,7 @@ std::string ToolRegistry::execute(const ToolCall& call, const AgentConfig& confi
     const size_t output_limit = resolve_effective_output_limit(descriptor->max_output_bytes, config.max_tool_output_bytes);
 
     if (!tool_execution_allowed(*descriptor, config)) {
-        return make_approval_blocked_result(*descriptor).dump();
+        return make_approval_blocked_result(*descriptor, config).dump();
     }
 
     try {

@@ -4,23 +4,33 @@
 
 #include <nlohmann/json.hpp>
 
-TEST(ToolRegistryTest, RegistersAndFindsToolsByName) {
-    ToolRegistry registry;
+namespace {
 
+ToolDescriptor make_descriptor(const std::string& name,
+                               ToolCategory category,
+                               bool mutates_repository_state,
+                               bool can_execute_repo_controlled_code,
+                               bool requires_approval = true) {
     ToolDescriptor descriptor;
-    descriptor.name = "alpha";
-    descriptor.description = "alpha tool";
-    descriptor.category = ToolCategory::ReadOnly;
-    descriptor.requires_approval = false;
-    descriptor.json_schema = {
-        {"type", "object"},
-        {"properties", nlohmann::json::object()},
-        {"required", nlohmann::json::array()}
-    };
-    descriptor.max_output_bytes = 128;
+    descriptor.name = name;
+    descriptor.description = name + " tool";
+    descriptor.category = category;
+    descriptor.mutates_repository_state = mutates_repository_state;
+    descriptor.can_execute_repo_controlled_code = can_execute_repo_controlled_code;
+    descriptor.requires_approval = requires_approval;
+    descriptor.json_schema = {{"type", "object"}};
     descriptor.execute = [](const ToolCall&, const AgentConfig&, size_t) {
         return nlohmann::json{{"ok", true}};
     };
+    return descriptor;
+}
+
+} // namespace
+
+TEST(ToolRegistryTest, RegistersAndFindsToolsByName) {
+    ToolRegistry registry;
+    ToolDescriptor descriptor = make_descriptor("alpha", ToolCategory::ReadOnly, false, false, false);
+    descriptor.max_output_bytes = 128;
 
     std::string err;
     EXPECT_TRUE(registry.register_tool(descriptor, &err)) << err;
@@ -30,23 +40,14 @@ TEST(ToolRegistryTest, RegistersAndFindsToolsByName) {
     EXPECT_EQ(found->name, "alpha");
     EXPECT_EQ(found->description, "alpha tool");
     EXPECT_EQ(found->category, ToolCategory::ReadOnly);
+    EXPECT_FALSE(found->mutates_repository_state);
+    EXPECT_FALSE(found->can_execute_repo_controlled_code);
     EXPECT_FALSE(found->requires_approval);
 }
 
 TEST(ToolRegistryTest, RejectsDuplicateRegistration) {
     ToolRegistry registry;
-
-    ToolDescriptor descriptor;
-    descriptor.name = "duplicate";
-    descriptor.description = "tool";
-    descriptor.json_schema = {
-        {"type", "object"},
-        {"properties", nlohmann::json::object()},
-        {"required", nlohmann::json::array()}
-    };
-    descriptor.execute = [](const ToolCall&, const AgentConfig&, size_t) {
-        return nlohmann::json{{"ok", true}};
-    };
+    ToolDescriptor descriptor = make_descriptor("duplicate", ToolCategory::ReadOnly, false, false, false);
 
     std::string err;
     EXPECT_TRUE(registry.register_tool(descriptor, &err)) << err;
@@ -56,22 +57,8 @@ TEST(ToolRegistryTest, RejectsDuplicateRegistration) {
 
 TEST(ToolRegistryTest, SchemaPreservesRegistrationOrder) {
     ToolRegistry registry;
-
-    ToolDescriptor first;
-    first.name = "first";
-    first.description = "first tool";
-    first.json_schema = {
-        {"type", "object"},
-        {"properties", nlohmann::json::object()},
-        {"required", nlohmann::json::array()}
-    };
-    first.execute = [](const ToolCall&, const AgentConfig&, size_t) {
-        return nlohmann::json{{"ok", true}};
-    };
-
-    ToolDescriptor second = first;
-    second.name = "second";
-    second.description = "second tool";
+    ToolDescriptor first = make_descriptor("first", ToolCategory::ReadOnly, false, false, false);
+    ToolDescriptor second = make_descriptor("second", ToolCategory::ReadOnly, false, false, false);
 
     std::string err;
     EXPECT_TRUE(registry.register_tool(first, &err)) << err;
@@ -88,12 +75,7 @@ TEST(ToolRegistryTest, ReadOnlyToolExecutesWithoutApproval) {
     ToolRegistry registry;
     bool called = false;
 
-    ToolDescriptor descriptor;
-    descriptor.name = "read";
-    descriptor.description = "read tool";
-    descriptor.category = ToolCategory::ReadOnly;
-    descriptor.requires_approval = false;
-    descriptor.json_schema = {{"type", "object"}};
+    ToolDescriptor descriptor = make_descriptor("read", ToolCategory::ReadOnly, false, false, false);
     descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
         called = true;
         return nlohmann::json{{"ok", true}, {"value", 1}};
@@ -111,18 +93,9 @@ TEST(ToolRegistryTest, ReadOnlyToolExecutesWithoutApproval) {
     EXPECT_TRUE(result["ok"].get<bool>());
 }
 
-TEST(ToolRegistryTest, ReadOnlyToolApprovalFlagIsNormalizedOffAtRegistration) {
+TEST(ToolRegistryTest, RiskFreeToolApprovalFlagIsNormalizedOffAtRegistration) {
     ToolRegistry registry;
-
-    ToolDescriptor descriptor;
-    descriptor.name = "read";
-    descriptor.description = "read tool";
-    descriptor.category = ToolCategory::ReadOnly;
-    descriptor.requires_approval = true;
-    descriptor.json_schema = {{"type", "object"}};
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
-        return nlohmann::json{{"ok", true}};
-    };
+    ToolDescriptor descriptor = make_descriptor("read", ToolCategory::ReadOnly, false, false, true);
 
     std::string err;
     ASSERT_TRUE(registry.register_tool(descriptor, &err)) << err;
@@ -133,16 +106,11 @@ TEST(ToolRegistryTest, ReadOnlyToolApprovalFlagIsNormalizedOffAtRegistration) {
     EXPECT_FALSE(stored->requires_approval);
 }
 
-TEST(ToolRegistryTest, MutatingToolBlockedWithoutApproval) {
+TEST(ToolRegistryTest, MutatingOnlyToolBlockedWithoutApproval) {
     ToolRegistry registry;
     bool called = false;
 
-    ToolDescriptor descriptor;
-    descriptor.name = "write";
-    descriptor.description = "write tool";
-    descriptor.category = ToolCategory::Mutating;
-    descriptor.requires_approval = true;
-    descriptor.json_schema = {{"type", "object"}};
+    ToolDescriptor descriptor = make_descriptor("write", ToolCategory::Mutating, true, false);
     descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
         called = true;
         return nlohmann::json{{"ok", true}};
@@ -160,21 +128,17 @@ TEST(ToolRegistryTest, MutatingToolBlockedWithoutApproval) {
     EXPECT_FALSE(result["ok"].get<bool>());
     EXPECT_EQ(result["status"], "blocked");
     EXPECT_EQ(result["category"], "mutating");
+    EXPECT_TRUE(result["requires_mutating_approval"].get<bool>());
+    EXPECT_FALSE(result["requires_execution_approval"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], nlohmann::json::array({"mutating"}));
     EXPECT_NE(result["error"].get<std::string>().find("allow_mutating_tools"), std::string::npos);
-    EXPECT_NE(result["error"].get<std::string>().find("NCA_ALLOW_MUTATING_TOOLS"), std::string::npos);
-    EXPECT_NE(result["error"].get<std::string>().find("--allow-mutating-tools"), std::string::npos);
 }
 
-TEST(ToolRegistryTest, ExecutionToolBlockedWithoutApproval) {
+TEST(ToolRegistryTest, ExecutionOnlyToolBlockedWithoutApproval) {
     ToolRegistry registry;
     bool called = false;
 
-    ToolDescriptor descriptor;
-    descriptor.name = "exec";
-    descriptor.description = "exec tool";
-    descriptor.category = ToolCategory::Execution;
-    descriptor.requires_approval = true;
-    descriptor.json_schema = {{"type", "object"}};
+    ToolDescriptor descriptor = make_descriptor("exec", ToolCategory::Execution, false, true);
     descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
         called = true;
         return nlohmann::json{{"ok", true}};
@@ -192,21 +156,94 @@ TEST(ToolRegistryTest, ExecutionToolBlockedWithoutApproval) {
     EXPECT_FALSE(result["ok"].get<bool>());
     EXPECT_EQ(result["status"], "blocked");
     EXPECT_EQ(result["category"], "execution");
+    EXPECT_FALSE(result["requires_mutating_approval"].get<bool>());
+    EXPECT_TRUE(result["requires_execution_approval"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], nlohmann::json::array({"execution"}));
     EXPECT_NE(result["error"].get<std::string>().find("allow_execution_tools"), std::string::npos);
-    EXPECT_NE(result["error"].get<std::string>().find("NCA_ALLOW_EXECUTION_TOOLS"), std::string::npos);
-    EXPECT_NE(result["error"].get<std::string>().find("--allow-execution-tools"), std::string::npos);
 }
 
-TEST(ToolRegistryTest, MutatingToolExecutesWhenApproved) {
+TEST(ToolRegistryTest, DualRiskToolBlockedWhenBothApprovalsAreMissing) {
     ToolRegistry registry;
     bool called = false;
 
-    ToolDescriptor descriptor;
-    descriptor.name = "write";
-    descriptor.description = "write tool";
-    descriptor.category = ToolCategory::Mutating;
-    descriptor.requires_approval = true;
-    descriptor.json_schema = {{"type", "object"}};
+    ToolDescriptor descriptor = make_descriptor("git_commit", ToolCategory::Mutating, true, true);
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+        called = true;
+        return nlohmann::json{{"ok", true}};
+    };
+
+    std::string err;
+    ASSERT_TRUE(registry.register_tool(descriptor, &err)) << err;
+
+    ToolCall tc;
+    tc.name = "git_commit";
+    AgentConfig config;
+
+    const auto result = nlohmann::json::parse(registry.execute(tc, config));
+    EXPECT_FALSE(called);
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_EQ(result["status"], "blocked");
+    EXPECT_EQ(result["category"], "mutating");
+    EXPECT_TRUE(result["requires_mutating_approval"].get<bool>());
+    EXPECT_TRUE(result["requires_execution_approval"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], nlohmann::json::array({"mutating", "execution"}));
+    EXPECT_NE(result["error"].get<std::string>().find("allow_mutating_tools"), std::string::npos);
+    EXPECT_NE(result["error"].get<std::string>().find("allow_execution_tools"), std::string::npos);
+}
+
+TEST(ToolRegistryTest, DualRiskToolBlockedWhenExecutionApprovalIsMissing) {
+    ToolRegistry registry;
+    bool called = false;
+
+    ToolDescriptor descriptor = make_descriptor("git_commit", ToolCategory::Mutating, true, true);
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+        called = true;
+        return nlohmann::json{{"ok", true}};
+    };
+
+    std::string err;
+    ASSERT_TRUE(registry.register_tool(descriptor, &err)) << err;
+
+    ToolCall tc;
+    tc.name = "git_commit";
+    AgentConfig config;
+    config.allow_mutating_tools = true;
+
+    const auto result = nlohmann::json::parse(registry.execute(tc, config));
+    EXPECT_FALSE(called);
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], nlohmann::json::array({"execution"}));
+}
+
+TEST(ToolRegistryTest, DualRiskToolBlockedWhenMutatingApprovalIsMissing) {
+    ToolRegistry registry;
+    bool called = false;
+
+    ToolDescriptor descriptor = make_descriptor("git_commit", ToolCategory::Mutating, true, true);
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+        called = true;
+        return nlohmann::json{{"ok", true}};
+    };
+
+    std::string err;
+    ASSERT_TRUE(registry.register_tool(descriptor, &err)) << err;
+
+    ToolCall tc;
+    tc.name = "git_commit";
+    AgentConfig config;
+    config.allow_execution_tools = true;
+
+    const auto result = nlohmann::json::parse(registry.execute(tc, config));
+    EXPECT_FALSE(called);
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], nlohmann::json::array({"mutating"}));
+}
+
+TEST(ToolRegistryTest, MutatingOnlyToolExecutesWhenApproved) {
+    ToolRegistry registry;
+    bool called = false;
+
+    ToolDescriptor descriptor = make_descriptor("write", ToolCategory::Mutating, true, false);
     descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
         called = true;
         return nlohmann::json{{"ok", true}};
@@ -225,16 +262,11 @@ TEST(ToolRegistryTest, MutatingToolExecutesWhenApproved) {
     EXPECT_TRUE(result["ok"].get<bool>());
 }
 
-TEST(ToolRegistryTest, ExecutionToolExecutesWhenApproved) {
+TEST(ToolRegistryTest, ExecutionOnlyToolExecutesWhenApproved) {
     ToolRegistry registry;
     bool called = false;
 
-    ToolDescriptor descriptor;
-    descriptor.name = "exec";
-    descriptor.description = "exec tool";
-    descriptor.category = ToolCategory::Execution;
-    descriptor.requires_approval = true;
-    descriptor.json_schema = {{"type", "object"}};
+    ToolDescriptor descriptor = make_descriptor("exec", ToolCategory::Execution, false, true);
     descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
         called = true;
         return nlohmann::json{{"ok", true}};
@@ -246,6 +278,30 @@ TEST(ToolRegistryTest, ExecutionToolExecutesWhenApproved) {
     ToolCall tc;
     tc.name = "exec";
     AgentConfig config;
+    config.allow_execution_tools = true;
+
+    const auto result = nlohmann::json::parse(registry.execute(tc, config));
+    EXPECT_TRUE(called);
+    EXPECT_TRUE(result["ok"].get<bool>());
+}
+
+TEST(ToolRegistryTest, DualRiskToolExecutesOnlyWhenBothApprovalsAreEnabled) {
+    ToolRegistry registry;
+    bool called = false;
+
+    ToolDescriptor descriptor = make_descriptor("git_commit", ToolCategory::Mutating, true, true);
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+        called = true;
+        return nlohmann::json{{"ok", true}};
+    };
+
+    std::string err;
+    ASSERT_TRUE(registry.register_tool(descriptor, &err)) << err;
+
+    ToolCall tc;
+    tc.name = "git_commit";
+    AgentConfig config;
+    config.allow_mutating_tools = true;
     config.allow_execution_tools = true;
 
     const auto result = nlohmann::json::parse(registry.execute(tc, config));

@@ -25,6 +25,8 @@ struct ToolDescriptor {
     std::string name;
     std::string description;
     ToolCategory category = ToolCategory::ReadOnly;
+    bool mutates_repository_state = false;
+    bool can_execute_repo_controlled_code = false;
     bool requires_approval = false;
     nlohmann::json json_schema = nlohmann::json::object();
     size_t max_output_bytes = 0;
