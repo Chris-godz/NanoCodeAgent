@@ -1,7 +1,11 @@
 ---
 name: docgen-readme-patch
 description: Conservative patch skill for the repository homepage README. Enforces skeleton preservation and bilingual sync. Do NOT use for book/tutorial chapters.
-allowed-tools: Bash, Read, Write, Edit
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
 ---
 
 # Purpose

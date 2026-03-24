@@ -1,7 +1,11 @@
 ---
 name: docgen-tutorial-update
 description: Update or generate tutorial and guide documentation based on repo understanding and change impact.
-allowed-tools: Bash, Read, Write, Edit
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
 ---
 
 # Purpose

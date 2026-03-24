@@ -1,7 +1,11 @@
 ---
 name: docgen-overview-writer
 description: Guide how to write documentation for quick project understanding; expression order and priorities, not scope or target selection.
-allowed-tools: Bash, Read, Write, Edit
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
 ---
 
 # Purpose

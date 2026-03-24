@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <optional>
+#include <vector>
 
 struct AgentConfig {
     std::string prompt;
@@ -12,6 +14,8 @@ struct AgentConfig {
     std::string base_url;
     bool debug_mode;
     std::string config_file_path; // Path to loaded config file, if any
+    std::vector<std::string> enabled_skills;
+    size_t max_skill_prompt_bytes = 32768;
     
     // Day 10 features
     std::string mode = "real"; // "real" or "mock"

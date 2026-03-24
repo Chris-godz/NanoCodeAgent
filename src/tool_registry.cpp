@@ -69,6 +69,16 @@ size_t resolve_effective_output_limit(size_t descriptor_limit, size_t config_lim
     return std::min(descriptor_limit, config_limit);
 }
 
+bool tool_visible_in_schema(const ToolDescriptor& descriptor, const AgentConfig& config) {
+    if (descriptor.mutates_repository_state && !config.allow_mutating_tools) {
+        return false;
+    }
+    if (descriptor.can_execute_repo_controlled_code && !config.allow_execution_tools) {
+        return false;
+    }
+    return true;
+}
+
 bool tool_execution_allowed(const ToolDescriptor& descriptor, const AgentConfig& config) {
     if (!descriptor.requires_approval) {
         return true;
@@ -149,6 +159,27 @@ nlohmann::json ToolRegistry::to_openai_schema() const {
     nlohmann::json schema = nlohmann::json::array();
 
     for (const auto& descriptor : descriptors_) {
+        schema.push_back({
+            {"type", "function"},
+            {"function", {
+                {"name", descriptor.name},
+                {"description", descriptor.description},
+                {"parameters", descriptor.json_schema}
+            }}
+        });
+    }
+
+    return schema;
+}
+
+nlohmann::json ToolRegistry::to_openai_schema(const AgentConfig& config) const {
+    nlohmann::json schema = nlohmann::json::array();
+
+    for (const auto& descriptor : descriptors_) {
+        if (!tool_visible_in_schema(descriptor, config)) {
+            continue;
+        }
+
         schema.push_back({
             {"type", "function"},
             {"function", {

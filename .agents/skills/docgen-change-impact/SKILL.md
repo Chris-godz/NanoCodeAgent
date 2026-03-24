@@ -1,7 +1,11 @@
 ---
 name: docgen-change-impact
 description: Analyze repository changes and map them to documentation impact.
-allowed-tools: Bash, Read, Write, Edit
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
 ---
 
 # Purpose

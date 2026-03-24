@@ -4,13 +4,17 @@
 
 #include <nlohmann/json.hpp>
 
+#include <utility>
+#include <vector>
+
 namespace {
 
 ToolDescriptor make_descriptor(const std::string& name,
                                ToolCategory category,
                                bool mutates_repository_state,
                                bool can_execute_repo_controlled_code,
-                               bool requires_approval = true) {
+                               bool requires_approval = true,
+                               std::vector<std::string> skill_aliases = {}) {
     ToolDescriptor descriptor;
     descriptor.name = name;
     descriptor.description = name + " tool";
@@ -18,6 +22,7 @@ ToolDescriptor make_descriptor(const std::string& name,
     descriptor.mutates_repository_state = mutates_repository_state;
     descriptor.can_execute_repo_controlled_code = can_execute_repo_controlled_code;
     descriptor.requires_approval = requires_approval;
+    descriptor.skill_aliases = std::move(skill_aliases);
     descriptor.json_schema = {{"type", "object"}};
     descriptor.execute = [](const ToolCall&, const AgentConfig&, size_t) {
         return nlohmann::json{{"ok", true}};
@@ -69,6 +74,47 @@ TEST(ToolRegistryTest, SchemaPreservesRegistrationOrder) {
     ASSERT_EQ(schema.size(), 2);
     EXPECT_EQ(schema[0]["function"]["name"], "first");
     EXPECT_EQ(schema[1]["function"]["name"], "second");
+}
+
+TEST(ToolRegistryTest, ApprovalFilteredSchemaUsesRegistrationOrder) {
+    ToolRegistry registry;
+    ToolDescriptor first = make_descriptor("first", ToolCategory::ReadOnly, false, false, false);
+    ToolDescriptor second = make_descriptor("second", ToolCategory::Mutating, true, false, true);
+    ToolDescriptor third = make_descriptor("third", ToolCategory::Execution, false, true, true);
+
+    std::string err;
+    ASSERT_TRUE(registry.register_tool(first, &err)) << err;
+    ASSERT_TRUE(registry.register_tool(second, &err)) << err;
+    ASSERT_TRUE(registry.register_tool(third, &err)) << err;
+
+    AgentConfig config;
+    const auto schema = registry.to_openai_schema(config);
+    ASSERT_TRUE(schema.is_array());
+    ASSERT_EQ(schema.size(), 1);
+    EXPECT_EQ(schema[0]["function"]["name"], "first");
+}
+
+TEST(ToolRegistryTest, ApprovalFilteredSchemaIncludesApprovedTools) {
+    ToolRegistry registry;
+    ToolDescriptor read = make_descriptor("read", ToolCategory::ReadOnly, false, false, false);
+    ToolDescriptor write = make_descriptor("write", ToolCategory::Mutating, true, false, true);
+    ToolDescriptor exec = make_descriptor("exec", ToolCategory::Execution, false, true, true);
+
+    std::string err;
+    ASSERT_TRUE(registry.register_tool(read, &err)) << err;
+    ASSERT_TRUE(registry.register_tool(write, &err)) << err;
+    ASSERT_TRUE(registry.register_tool(exec, &err)) << err;
+
+    AgentConfig config;
+    config.allow_mutating_tools = true;
+    config.allow_execution_tools = true;
+
+    const auto schema = registry.to_openai_schema(config);
+    ASSERT_TRUE(schema.is_array());
+    ASSERT_EQ(schema.size(), 3);
+    EXPECT_EQ(schema[0]["function"]["name"], "read");
+    EXPECT_EQ(schema[1]["function"]["name"], "write");
+    EXPECT_EQ(schema[2]["function"]["name"], "exec");
 }
 
 TEST(ToolRegistryTest, ReadOnlyToolExecutesWithoutApproval) {

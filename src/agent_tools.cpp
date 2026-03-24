@@ -239,6 +239,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = false,
         .can_execute_repo_controlled_code = false,
         .requires_approval = false,
+        .skill_aliases = {"Read"},
         .json_schema = make_parameters_schema({
             {"path", {
                 {"type", "string"},
@@ -265,6 +266,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = true,
         .can_execute_repo_controlled_code = false,
         .requires_approval = true,
+        .skill_aliases = {"Write"},
         .json_schema = make_parameters_schema({
             {"path", {
                 {"type", "string"},
@@ -294,6 +296,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = true,
         .can_execute_repo_controlled_code = true,
         .requires_approval = true,
+        .skill_aliases = {"Bash"},
         .json_schema = make_parameters_schema({
             {"command", {
                 {"type", "string"},
@@ -328,6 +331,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = true,
         .can_execute_repo_controlled_code = true,
         .requires_approval = true,
+        .skill_aliases = {"Bash"},
         .json_schema = make_parameters_schema({
             {"build_mode", {
                 {"type", "string"},
@@ -379,6 +383,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = true,
         .can_execute_repo_controlled_code = true,
         .requires_approval = true,
+        .skill_aliases = {"Bash"},
         .json_schema = make_parameters_schema({
             {"timeout_ms", {
                 {"type", "integer"},
@@ -428,6 +433,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = false,
         .can_execute_repo_controlled_code = false,
         .requires_approval = false,
+        .skill_aliases = {"Read"},
         .json_schema = make_parameters_schema({
             {"directory", {
                 {"type", "string"},
@@ -461,6 +467,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = false,
         .can_execute_repo_controlled_code = false,
         .requires_approval = false,
+        .skill_aliases = {"Read"},
         .json_schema = make_parameters_schema({
             {"query", {
                 {"type", "string"},
@@ -498,6 +505,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = false,
         .can_execute_repo_controlled_code = false,
         .requires_approval = false,
+        .skill_aliases = {"Read"},
         .json_schema = make_parameters_schema(nlohmann::json::object()),
         .max_output_bytes = kMaxRepoOutputBytes,
         .execute = [](const ToolCall&, const AgentConfig& config, size_t output_limit) {
@@ -556,6 +564,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = true,
         .can_execute_repo_controlled_code = false,
         .requires_approval = true,
+        .skill_aliases = {"Edit"},
         .json_schema = nlohmann::json{
             {"type", "object"},
             {"properties", {
@@ -748,6 +757,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = false,
         .can_execute_repo_controlled_code = false,
         .requires_approval = false,
+        .skill_aliases = {"Read"},
         .json_schema = make_parameters_schema({
             {"cached", {
                 {"type", "boolean"},
@@ -788,6 +798,7 @@ ToolRegistry build_default_tool_registry() {
         .mutates_repository_state = false,
         .can_execute_repo_controlled_code = false,
         .requires_approval = false,
+        .skill_aliases = {"Read"},
         .json_schema = make_parameters_schema({
             {"rev", {
                 {"type", "string"},

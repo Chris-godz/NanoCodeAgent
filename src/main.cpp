@@ -3,11 +3,32 @@
 #include "logger.hpp"
 #include "agent_loop.hpp"
 #include "agent_tools.hpp"
+#include "skill_loader.hpp"
 #include "llm.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <fstream>
 #include <filesystem>
+#include <vector>
+
+namespace {
+
+std::string join_names(const std::vector<std::string>& names) {
+    if (names.empty()) {
+        return "<none>";
+    }
+
+    std::string joined;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (i > 0) {
+            joined += ", ";
+        }
+        joined += names[i];
+    }
+    return joined;
+}
+
+} // namespace
 
 static std::string load_system_prompt(const AgentConfig& config) {
     if (config.system_prompt_file.has_value()) {
@@ -53,8 +74,41 @@ int main(int argc, char* argv[]) {
     }
 
     // 4. Set up the foundational Agent Loop objects
-    std::string sys_prompt = load_system_prompt(config);
-    nlohmann::json tools = get_agent_tools_schema();
+    const ToolRegistry& registry = get_default_tool_registry();
+    SkillLoader skill_loader(registry);
+    SkillRuntimeContext skill_context;
+    std::string skill_err;
+    if (!skill_loader.load_runtime_context(config.workspace_abs, config.enabled_skills, &skill_context, &skill_err)) {
+        LOG_ERROR("Could not load runtime skills: {}", skill_err);
+        return EXIT_FAILURE;
+    }
+
+    LOG_DEBUG("Runtime skill repo root: {}", skill_context.repo_root.empty() ? std::string("<none>") : skill_context.repo_root);
+    LOG_DEBUG("Runtime skills root: {}", skill_context.skills_root.empty() ? std::string("<none>") : skill_context.skills_root);
+    LOG_DEBUG("Discovered skills: {}", join_names(skill_context.discovered_skill_names));
+    std::vector<std::string> enabled_skill_names;
+    enabled_skill_names.reserve(skill_context.enabled_skills.size());
+    for (const LoadedSkill& skill : skill_context.enabled_skills) {
+        enabled_skill_names.push_back(skill.manifest.name);
+    }
+    LOG_DEBUG("Enabled skills: {}", join_names(enabled_skill_names));
+    LOG_DEBUG("Skipped skills: {}", join_names(skill_context.skipped_skill_names));
+    for (const LoadedSkill& skill : skill_context.enabled_skills) {
+        for (const std::string& warning : skill.warnings) {
+            spdlog::warn("{}", warning);
+        }
+    }
+
+    std::string sys_prompt;
+    if (!skill_loader.build_system_prompt(load_system_prompt(config),
+                                          skill_context,
+                                          config.max_skill_prompt_bytes,
+                                          &sys_prompt,
+                                          &skill_err)) {
+        LOG_ERROR("Could not build runtime skill prompt: {}", skill_err);
+        return EXIT_FAILURE;
+    }
+    nlohmann::json tools = registry.to_openai_schema(config);
 
     if (config.dry_run) {
         std::cout << "--- DRY RUN MODE ---\n";

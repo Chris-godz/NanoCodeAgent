@@ -74,3 +74,20 @@ TEST_F(CliTest, ParseApprovalFlags) {
     EXPECT_TRUE(config.allow_mutating_tools);
     EXPECT_TRUE(config.allow_execution_tools);
 }
+
+TEST_F(CliTest, ParseRepeatableSkillFlags) {
+    AgentConfig config;
+    config.enabled_skills = {"from-env"};
+    const char* argv[] = {
+        "agent",
+        "-e", "skill task",
+        "--skill", "docgen-reviewer",
+        "--skill", "docgen-fact-check"
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
+
+    EXPECT_EQ(cli_parse(argc, const_cast<char**>(argv), config), CliResult::Success);
+    ASSERT_EQ(config.enabled_skills.size(), 2u);
+    EXPECT_EQ(config.enabled_skills[0], "docgen-reviewer");
+    EXPECT_EQ(config.enabled_skills[1], "docgen-fact-check");
+}

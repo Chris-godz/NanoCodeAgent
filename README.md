@@ -27,6 +27,10 @@ The repository now has two complementary tracks. The runtime track turns a promp
 
 For coding work, a task enters through CLI and config setup, flows through the agent loop and LLM bridge, and only reaches tool executors after policy and workspace checks. For documentation work, `scripts/docgen/change_facts.py` captures what changed, AI scope decision limits what may be edited, `scripts/docgen/reference_context.py` gathers evidence, the writer updates approved docs in place, and the verify/review loop checks paths, links, diagram specs, Mermaid rendering, and review feedback before a summary is rendered.
 
+## Runtime Skills And Boundaries
+
+Runtime skills in NanoCodeAgent are prompt and capability packaging, not permission boundaries. A skill frontmatter `allowed-tools` entry is advisory-only metadata: when present and well formed, it is injected as a preference hint such as `Preferred tools for this skill: ...`, but it does not gate execution and it does not filter the tool schema. The real safety boundary stays in global runtime policy and, for future orchestration work, subagent-specific policy.
+
 ## Current Status
 
 `Phase 0` and `Phase 1` are complete. The current baseline includes:

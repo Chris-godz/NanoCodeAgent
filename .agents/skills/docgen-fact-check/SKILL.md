@@ -1,7 +1,11 @@
 ---
 name: docgen-fact-check
 description: Verify generated or updated documentation against the actual repository state.
-allowed-tools: Bash, Read, Write, Edit
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
 ---
 
 # Purpose

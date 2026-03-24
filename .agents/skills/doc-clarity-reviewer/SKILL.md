@@ -1,7 +1,9 @@
 ---
 name: doc-clarity-reviewer
 description: Review documentation for human understanding effect; not format or fact-check only.
-allowed-tools: Bash, Read
+allowed-tools:
+  - Bash
+  - Read
 ---
 
 # Purpose

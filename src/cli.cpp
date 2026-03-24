@@ -19,6 +19,7 @@ void print_help() {
               << "  --dry-run                Print what would be sent without making network requests (Env: NCA_DRY_RUN)\n"
               << "  --allow-mutating-tools   Allow approval-required mutating tools (Env: NCA_ALLOW_MUTATING_TOOLS)\n"
               << "  --allow-execution-tools  Allow approval-required execution tools (Env: NCA_ALLOW_EXECUTION_TOOLS)\n"
+              << "  --skill <name>           Enable a runtime skill from .agents/skills (repeatable, Env: NCA_SKILLS)\n"
               << "  --max-turns <n>          Maximum conversation turns (Default: 20)\n"
               << "  --max-tool-calls-per-turn <n> Max tools per turn (Default: 8)\n"
               << "  --max-total-tool-calls <n> Max total tool calls (Default: 50)\n"
@@ -58,6 +59,7 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
         {"dry-run", no_argument, nullptr, 3003},
         {"allow-mutating-tools", no_argument, nullptr, 3004},
         {"allow-execution-tools", no_argument, nullptr, 3005},
+        {"skill", required_argument, nullptr, 3006},
         {nullptr, no_argument, nullptr, 0}
     };
 
@@ -65,6 +67,7 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
     optind = 1;
 
     int opt;
+    bool saw_skill_flag = false;
     while ((opt = getopt_long(argc, argv, short_opts, long_opts, nullptr)) != -1) {
         switch (opt) {
             case 'h':
@@ -126,6 +129,13 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
                 break;
             case 3005:
                 config.allow_execution_tools = true;
+                break;
+            case 3006:
+                if (!saw_skill_flag) {
+                    config.enabled_skills.clear();
+                    saw_skill_flag = true;
+                }
+                config.enabled_skills.push_back(optarg);
                 break;
             case '?':
             default:

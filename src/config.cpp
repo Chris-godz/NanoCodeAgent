@@ -4,6 +4,7 @@
 #include <fstream>
 #include <algorithm>
 #include <iostream>
+#include <vector>
 
 static void trim(std::string& s) {
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
@@ -19,6 +20,26 @@ static std::string to_lower(const std::string& s) {
 static bool parse_bool_like(const std::string& value) {
     const std::string lowered = to_lower(value);
     return lowered == "true" || lowered == "1";
+}
+
+static std::vector<std::string> split_csv_list(const std::string& value) {
+    std::vector<std::string> items;
+    std::size_t start = 0;
+
+    while (start <= value.size()) {
+        const std::size_t comma = value.find(',', start);
+        std::string item = value.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        trim(item);
+        if (!item.empty()) {
+            items.push_back(item);
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+
+    return items;
 }
 
 static void config_load_from_file(AgentConfig& config, const std::string& filepath) {
@@ -59,6 +80,7 @@ static void config_load_from_file(AgentConfig& config, const std::string& filepa
         else if (key == "dry_run") config.dry_run = parse_bool_like(val);
         else if (key == "allow_mutating_tools") config.allow_mutating_tools = parse_bool_like(val);
         else if (key == "allow_execution_tools") config.allow_execution_tools = parse_bool_like(val);
+        else if (key == "skills") config.enabled_skills = split_csv_list(val);
     }
 }
 
@@ -79,6 +101,7 @@ static void config_apply_env(AgentConfig& config) {
     if (const char* v = std::getenv("NCA_DRY_RUN")) config.dry_run = parse_bool_like(v);
     if (const char* v = std::getenv("NCA_ALLOW_MUTATING_TOOLS")) config.allow_mutating_tools = parse_bool_like(v);
     if (const char* v = std::getenv("NCA_ALLOW_EXECUTION_TOOLS")) config.allow_execution_tools = parse_bool_like(v);
+    if (const char* v = std::getenv("NCA_SKILLS")) config.enabled_skills = split_csv_list(v);
 }
 
 AgentConfig config_init(int argc, char* argv[]) {

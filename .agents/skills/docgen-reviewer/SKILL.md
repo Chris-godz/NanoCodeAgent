@@ -1,7 +1,9 @@
 ---
 name: docgen-reviewer
 description: Final review pass for teaching quality and readability. Does not rewrite content.
-allowed-tools: Bash, Read
+allowed-tools:
+  - Bash
+  - Read
 ---
 
 # Purpose

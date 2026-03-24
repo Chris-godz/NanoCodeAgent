@@ -28,6 +28,7 @@ struct ToolDescriptor {
     bool mutates_repository_state = false;
     bool can_execute_repo_controlled_code = false;
     bool requires_approval = false;
+    std::vector<std::string> skill_aliases;
     nlohmann::json json_schema = nlohmann::json::object();
     size_t max_output_bytes = 0;
     Executor execute;
@@ -42,6 +43,8 @@ public:
     std::string execute(const ToolCall& call, const AgentConfig& config) const;
 
     nlohmann::json to_openai_schema() const;
+
+    nlohmann::json to_openai_schema(const AgentConfig& config) const;
 
     size_t size() const { return descriptors_.size(); }
 

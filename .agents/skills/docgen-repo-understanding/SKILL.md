@@ -1,7 +1,11 @@
 ---
 name: docgen-repo-understanding
 description: Build a global semantic model of the repository for documentation purposes.
-allowed-tools: Bash, Read, Write, Edit
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
 ---
 
 # Purpose
