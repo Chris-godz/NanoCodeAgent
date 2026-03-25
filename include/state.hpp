@@ -5,9 +5,32 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
+struct PlanStep {
+    std::string id;
+    std::string title;
+    std::string status = "pending";
+    std::string detail;
+    nlohmann::json metadata = nlohmann::json::object();
+};
+
+struct Plan {
+    int generation = 0;
+    std::string summary;
+    std::vector<PlanStep> steps;
+    nlohmann::json metadata = nlohmann::json::object();
+};
+
+struct TraceEvent {
+    std::string kind;
+    std::string message;
+    std::string created_at;
+    nlohmann::json payload = nlohmann::json::object();
+};
 
 struct ToolCallRecord {
     int turn_index = 0;
@@ -64,7 +87,17 @@ struct SessionState {
     std::string scratchpad;
     std::vector<std::string> active_skills;
     nlohmann::json active_rules_snapshot = nlohmann::json::object();
+    Plan plan;
+    std::vector<TraceEvent> trace;
 };
+
+bool is_valid_plan_step_status(std::string_view status);
+void to_json(nlohmann::json& json_value, const PlanStep& step);
+void from_json(const nlohmann::json& json_value, PlanStep& step);
+void to_json(nlohmann::json& json_value, const Plan& plan);
+void from_json(const nlohmann::json& json_value, Plan& plan);
+void to_json(nlohmann::json& json_value, const TraceEvent& event);
+void from_json(const nlohmann::json& json_value, TraceEvent& event);
 
 SessionState make_session_state();
 std::string state_now_timestamp();
@@ -72,11 +105,13 @@ void touch_session(SessionState& session);
 void prepare_session_state(SessionState& session,
                            const std::vector<std::string>& active_skills,
                            const nlohmann::json& active_rules_snapshot);
+void reset_session_plan(SessionState& session);
 void seed_session_messages_if_empty(SessionState& session,
                                     const std::string& system_prompt,
                                     const std::string& user_prompt);
 void set_session_scratchpad(SessionState& session, const std::string& scratchpad);
 std::size_t append_tool_call_record(SessionState& session, int turn_index, const ToolCall& call);
+std::size_t append_skipped_tool_call_record(SessionState& session, int turn_index, const ToolCall& call);
 void finish_tool_call_record(SessionState& session, std::size_t record_index, const std::string& status);
 void append_observation_record(SessionState& session,
                                int turn_index,

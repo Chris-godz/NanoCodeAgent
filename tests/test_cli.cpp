@@ -106,6 +106,22 @@ TEST_F(CliTest, ParseSessionFile) {
     EXPECT_EQ(*config.session_file, "tmp/session.json");
 }
 
+TEST_F(CliTest, ParseDetailAndTraceJsonl) {
+    AgentConfig config;
+    const char* argv[] = {
+        "agent",
+        "-e", "detail task",
+        "--detail",
+        "--trace-jsonl", "tmp/trace.jsonl"
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
+
+    EXPECT_EQ(cli_parse(argc, const_cast<char**>(argv), config), CliResult::Success);
+    EXPECT_TRUE(config.detail_mode);
+    ASSERT_TRUE(config.trace_jsonl.has_value());
+    EXPECT_EQ(*config.trace_jsonl, "tmp/trace.jsonl");
+}
+
 TEST_F(CliTest, ParseRepeatableMcpServerFlags) {
     AgentConfig config;
     config.mcp_servers = {"from-env=python3 old.py"};

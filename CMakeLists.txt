@@ -66,6 +66,7 @@ set(SOURCES
     src/mcp_tool_bridge.cpp
     src/state.cpp
     src/state_store.cpp
+    src/trace.cpp
 )
 
 # Main executable

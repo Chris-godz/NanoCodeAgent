@@ -2,6 +2,7 @@
 
 #include "config.hpp"
 #include "state.hpp"
+#include "trace.hpp"
 #include "tool_registry.hpp"
 #include <string>
 #include <nlohmann/json.hpp>
@@ -26,4 +27,5 @@ void agent_run(const AgentConfig& config,
                const nlohmann::json& tools_registry,
                LLMStreamFunc llm_func,
                SessionState* session_state = nullptr,
-               const ToolRegistry* tool_registry = nullptr);
+               const ToolRegistry* tool_registry = nullptr,
+               TraceSink* trace_sink = nullptr);

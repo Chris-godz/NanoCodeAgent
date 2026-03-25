@@ -1,10 +1,12 @@
 #include "state.hpp"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <iomanip>
+#include <stdexcept>
 #include <sstream>
 #include <utility>
 
@@ -19,6 +21,10 @@ std::string fallback_tool_call_id(const ToolCall& call) {
         return call.id;
     }
     return "call_" + std::to_string(call.index);
+}
+
+[[noreturn]] void throw_invalid_state(std::string message) {
+    throw std::invalid_argument(std::move(message));
 }
 
 bool read_string_field(const nlohmann::json& json_value,
@@ -246,6 +252,33 @@ bool validate_messages_array(const nlohmann::json& messages, std::string* err) {
     return true;
 }
 
+void validate_plan_step_or_throw(const PlanStep& step) {
+    if (!is_valid_plan_step_status(step.status)) {
+        throw_invalid_state("PlanStep status must be one of: pending, in_progress, completed.");
+    }
+    if (!step.metadata.is_object()) {
+        throw_invalid_state("PlanStep metadata must be a JSON object.");
+    }
+}
+
+void validate_plan_or_throw(const Plan& plan) {
+    if (plan.generation < 0) {
+        throw_invalid_state("Plan generation must be non-negative.");
+    }
+    if (!plan.metadata.is_object()) {
+        throw_invalid_state("Plan metadata must be a JSON object.");
+    }
+    for (const PlanStep& step : plan.steps) {
+        validate_plan_step_or_throw(step);
+    }
+}
+
+void validate_trace_event_or_throw(const TraceEvent& event) {
+    if (!event.payload.is_object()) {
+        throw_invalid_state("TraceEvent payload must be a JSON object.");
+    }
+}
+
 std::string make_session_id() {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
@@ -254,6 +287,145 @@ std::string make_session_id() {
 }
 
 }  // namespace
+
+bool is_valid_plan_step_status(std::string_view status) {
+    static constexpr std::array<std::string_view, 3> kAllowedStatuses{
+        "pending",
+        "in_progress",
+        "completed"
+    };
+
+    for (const std::string_view allowed : kAllowedStatuses) {
+        if (status == allowed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void to_json(nlohmann::json& json_value, const PlanStep& step) {
+    validate_plan_step_or_throw(step);
+    json_value = nlohmann::json{
+        {"id", step.id},
+        {"title", step.title},
+        {"status", step.status},
+        {"detail", step.detail},
+        {"metadata", step.metadata}
+    };
+}
+
+void from_json(const nlohmann::json& json_value, PlanStep& step) {
+    if (!json_value.is_object()) {
+        throw std::invalid_argument("PlanStep must be a JSON object.");
+    }
+
+    PlanStep parsed;
+    if (json_value.contains("id")) {
+        parsed.id = json_value.at("id").get<std::string>();
+    }
+    if (json_value.contains("title")) {
+        parsed.title = json_value.at("title").get<std::string>();
+    }
+    if (json_value.contains("status")) {
+        parsed.status = json_value.at("status").get<std::string>();
+    }
+    if (!is_valid_plan_step_status(parsed.status)) {
+        throw std::invalid_argument(
+            "PlanStep status must be one of: pending, in_progress, completed.");
+    }
+    if (json_value.contains("detail")) {
+        parsed.detail = json_value.at("detail").get<std::string>();
+    }
+    if (json_value.contains("metadata")) {
+        if (!json_value.at("metadata").is_object()) {
+            throw std::invalid_argument("PlanStep metadata must be a JSON object.");
+        }
+        parsed.metadata = json_value.at("metadata");
+    }
+
+    step = std::move(parsed);
+}
+
+void to_json(nlohmann::json& json_value, const Plan& plan) {
+    validate_plan_or_throw(plan);
+    json_value = nlohmann::json{
+        {"generation", plan.generation},
+        {"summary", plan.summary},
+        {"steps", plan.steps},
+        {"metadata", plan.metadata}
+    };
+}
+
+void from_json(const nlohmann::json& json_value, Plan& plan) {
+    if (!json_value.is_object()) {
+        throw std::invalid_argument("Plan must be a JSON object.");
+    }
+
+    Plan parsed;
+    if (json_value.contains("generation")) {
+        if (!json_value.at("generation").is_number_integer()) {
+            throw std::invalid_argument("Plan generation must be an integer.");
+        }
+        parsed.generation = json_value.at("generation").get<int>();
+        if (parsed.generation < 0) {
+            throw std::invalid_argument("Plan generation must be non-negative.");
+        }
+    }
+    if (json_value.contains("summary")) {
+        parsed.summary = json_value.at("summary").get<std::string>();
+    }
+    if (json_value.contains("steps")) {
+        if (!json_value.at("steps").is_array()) {
+            throw std::invalid_argument("Plan steps must be a JSON array.");
+        }
+        parsed.steps = json_value.at("steps").get<std::vector<PlanStep>>();
+    }
+    if (json_value.contains("metadata")) {
+        if (!json_value.at("metadata").is_object()) {
+            throw std::invalid_argument("Plan metadata must be a JSON object.");
+        }
+        parsed.metadata = json_value.at("metadata");
+    }
+
+    validate_plan_or_throw(parsed);
+    plan = std::move(parsed);
+}
+
+void to_json(nlohmann::json& json_value, const TraceEvent& event) {
+    validate_trace_event_or_throw(event);
+    json_value = nlohmann::json{
+        {"kind", event.kind},
+        {"message", event.message},
+        {"created_at", event.created_at},
+        {"payload", event.payload}
+    };
+}
+
+void from_json(const nlohmann::json& json_value, TraceEvent& event) {
+    if (!json_value.is_object()) {
+        throw std::invalid_argument("TraceEvent must be a JSON object.");
+    }
+
+    TraceEvent parsed;
+    if (json_value.contains("kind")) {
+        parsed.kind = json_value.at("kind").get<std::string>();
+    }
+    if (json_value.contains("message")) {
+        parsed.message = json_value.at("message").get<std::string>();
+    }
+    if (json_value.contains("created_at")) {
+        parsed.created_at = json_value.at("created_at").get<std::string>();
+    }
+    if (json_value.contains("payload")) {
+        if (!json_value.at("payload").is_object()) {
+            throw std::invalid_argument("TraceEvent payload must be a JSON object.");
+        }
+        parsed.payload = json_value.at("payload");
+    }
+
+    validate_trace_event_or_throw(parsed);
+    event = std::move(parsed);
+}
 
 std::string state_now_timestamp() {
     const auto now = std::chrono::system_clock::now();
@@ -304,7 +476,15 @@ void prepare_session_state(SessionState& session,
     session.active_rules_snapshot = active_rules_snapshot.is_object()
                                         ? active_rules_snapshot
                                         : nlohmann::json::object();
+    reset_session_plan(session);
     touch_session(session);
+}
+
+void reset_session_plan(SessionState& session) {
+    ++session.plan.generation;
+    session.plan.summary.clear();
+    session.plan.steps.clear();
+    session.plan.metadata = nlohmann::json::object();
 }
 
 void seed_session_messages_if_empty(SessionState& session,
@@ -337,6 +517,20 @@ std::size_t append_tool_call_record(SessionState& session, int turn_index, const
     record.arguments = call.arguments;
     record.status = "started";
     record.started_at = state_now_timestamp();
+    session.tool_calls.push_back(std::move(record));
+    touch_session(session);
+    return session.tool_calls.size() - 1;
+}
+
+std::size_t append_skipped_tool_call_record(SessionState& session, int turn_index, const ToolCall& call) {
+    ToolCallRecord record;
+    record.turn_index = turn_index;
+    record.tool_call_id = fallback_tool_call_id(call);
+    record.tool_name = call.name;
+    record.arguments = call.arguments;
+    record.status = "skipped";
+    record.started_at = "";
+    record.finished_at = state_now_timestamp();
     session.tool_calls.push_back(std::move(record));
     touch_session(session);
     return session.tool_calls.size() - 1;
@@ -415,6 +609,7 @@ nlohmann::json make_active_rules_snapshot(const AgentConfig& config) {
         {"mode", config.mode},
         {"allow_mutating_tools", config.allow_mutating_tools},
         {"allow_execution_tools", config.allow_execution_tools},
+        {"detail_mode", config.detail_mode},
         {"max_turns", config.max_turns},
         {"max_tool_calls_per_turn", config.max_tool_calls_per_turn},
         {"max_total_tool_calls", config.max_total_tool_calls},
@@ -614,6 +809,39 @@ bool session_state_from_json(const nlohmann::json& json_value, SessionState* out
         session.active_rules_snapshot = json_value.at("active_rules_snapshot");
     }
 
+    if (json_value.contains("plan")) {
+        try {
+            session.plan = json_value.at("plan").get<Plan>();
+        } catch (const std::exception& e) {
+            if (err) {
+                *err = std::string("Field 'plan' is invalid: ") + e.what();
+            }
+            return false;
+        }
+    }
+
+    if (json_value.contains("trace")) {
+        const auto& trace = json_value.at("trace");
+        if (!trace.is_array()) {
+            if (err) {
+                *err = "Field 'trace' must be an array.";
+            }
+            return false;
+        }
+        session.trace.clear();
+        session.trace.reserve(trace.size());
+        for (const auto& item : trace) {
+            try {
+                session.trace.push_back(item.get<TraceEvent>());
+            } catch (const std::exception& e) {
+                if (err) {
+                    *err = std::string("Field 'trace' contains an invalid event: ") + e.what();
+                }
+                return false;
+            }
+        }
+    }
+
     *out = std::move(session);
     return true;
 }
@@ -684,6 +912,8 @@ nlohmann::json session_state_to_json(const SessionState& session) {
         }},
         {"scratchpad", session.scratchpad},
         {"active_skills", session.active_skills},
-        {"active_rules_snapshot", session.active_rules_snapshot}
+        {"active_rules_snapshot", session.active_rules_snapshot},
+        {"plan", session.plan},
+        {"trace", session.trace}
     };
 }

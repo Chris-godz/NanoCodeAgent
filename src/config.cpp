@@ -86,6 +86,8 @@ static void config_load_from_file(AgentConfig& config, const std::string& filepa
         else if (key == "mock_fixture") config.mock_fixture = val;
         else if (key == "system_prompt_file") config.system_prompt_file = val;
         else if (key == "session_file") config.session_file = val;
+        else if (key == "detail") config.detail_mode = parse_bool_like(val);
+        else if (key == "trace_jsonl") config.trace_jsonl = val;
         else if (key == "mcp_server") {
             if (auto normalized = normalize_mcp_server_spec(val)) {
                 config.mcp_servers.push_back(*normalized);
@@ -113,6 +115,8 @@ static void config_apply_env(AgentConfig& config) {
     if (const char* v = std::getenv("NCA_MOCK_FIXTURE")) config.mock_fixture = v;
     if (const char* v = std::getenv("NCA_SYSTEM_PROMPT_FILE")) config.system_prompt_file = v;
     if (const char* v = std::getenv("NCA_SESSION_FILE")) config.session_file = v;
+    if (const char* v = std::getenv("NCA_DETAIL")) config.detail_mode = parse_bool_like(v);
+    if (const char* v = std::getenv("NCA_TRACE_JSONL")) config.trace_jsonl = v;
     if (const char* v = std::getenv("NCA_MCP_SERVER")) {
         if (auto normalized = normalize_mcp_server_spec(v)) {
             config.mcp_servers = {*normalized};

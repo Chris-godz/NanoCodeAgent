@@ -8,6 +8,7 @@
 #include "llm.hpp"
 #include "state.hpp"
 #include "state_store.hpp"
+#include "trace.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <fstream>
@@ -157,6 +158,16 @@ int main(int argc, char* argv[]) {
     nlohmann::json tools = registry.to_openai_schema(config);
     prepare_session_state(session_state, enabled_skill_names, make_active_rules_snapshot(config));
 
+    std::unique_ptr<JsonlTraceSink> jsonl_trace_sink;
+    if (config.trace_jsonl.has_value()) {
+        jsonl_trace_sink = std::make_unique<JsonlTraceSink>(config.trace_jsonl.value());
+        std::string trace_err;
+        if (!jsonl_trace_sink->prepare(&trace_err)) {
+            LOG_ERROR("Could not prepare trace output: {}", trace_err);
+            return EXIT_FAILURE;
+        }
+    }
+
     if (config.dry_run) {
         std::cout << "--- DRY RUN MODE ---\n";
         std::cout << "System Prompt: \n" << sys_prompt << "\n\n";
@@ -224,7 +235,14 @@ int main(int argc, char* argv[]) {
     // 5. Run the Agent Loop
     int exit_code = EXIT_SUCCESS;
     try {
-        agent_run(config, sys_prompt, config.prompt, tools, llm_func, &session_state, &registry);
+        agent_run(config,
+                  sys_prompt,
+                  config.prompt,
+                  tools,
+                  llm_func,
+                  &session_state,
+                  &registry,
+                  jsonl_trace_sink.get());
         LOG_INFO("Agent loop finished successfully.");
     } catch (const std::exception& e) {
         LOG_ERROR("Agent loop terminated with error: {}", e.what());

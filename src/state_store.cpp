@@ -89,6 +89,16 @@ StateStoreLoadResult JsonFileStateStore::load() const {
 bool JsonFileStateStore::save(const SessionState& session, std::string* err) {
     const fs::path session_path(path_);
     const fs::path parent_path = session_path.parent_path();
+    std::string serialized_session;
+
+    try {
+        serialized_session = session_state_to_json(session).dump(2) + "\n";
+    } catch (const std::exception& e) {
+        if (err) {
+            *err = std::string("Invalid session state for save: ") + e.what();
+        }
+        return false;
+    }
 
     if (!parent_path.empty()) {
         std::error_code mkdir_ec;
@@ -110,7 +120,7 @@ bool JsonFileStateStore::save(const SessionState& session, std::string* err) {
         return false;
     }
 
-    output << session_state_to_json(session).dump(2) << "\n";
+    output << serialized_session;
     output.flush();
     if (!output) {
         output.close();

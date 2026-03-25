@@ -73,6 +73,7 @@ TEST_F(StateIntegrationTest, AgentRunUpdatesSessionState) {
     EXPECT_EQ(session.counters.llm_turns, 3);
     EXPECT_EQ(session.counters.tool_calls_requested, 2);
     EXPECT_EQ(session.counters.observations, 2);
+    EXPECT_EQ(session.plan.generation, 1);
     EXPECT_EQ(session.scratchpad, "done");
     ASSERT_EQ(session.active_skills.size(), 1u);
     EXPECT_EQ(session.active_skills[0], "runtime-skill");
@@ -118,4 +119,29 @@ TEST_F(StateIntegrationTest, PreloadedMessagesAreReused) {
     EXPECT_EQ(seen_messages[1]["content"], "persisted user");
     EXPECT_EQ(session.turn_index, 2);
     EXPECT_EQ(session.scratchpad, "resumed");
+}
+
+TEST_F(StateIntegrationTest, PrepareSessionStateResetsStalePlanAndBumpsGeneration) {
+    AgentConfig config;
+    config.workspace_abs = workspace.string();
+
+    SessionState session = make_session_state();
+    session.plan.generation = 4;
+    session.plan.summary = "stale";
+    session.plan.steps.push_back(PlanStep{
+        .id = "step-1",
+        .title = "old step",
+        .status = "in_progress",
+        .detail = "remove me",
+        .metadata = nlohmann::json{{"phase", "old"}}
+    });
+    session.plan.metadata = nlohmann::json{{"owner", "planner"}};
+
+    prepare_session_state(session, {"runtime-skill"}, make_active_rules_snapshot(config));
+
+    EXPECT_EQ(session.plan.generation, 5);
+    EXPECT_TRUE(session.plan.summary.empty());
+    EXPECT_TRUE(session.plan.steps.empty());
+    EXPECT_TRUE(session.plan.metadata.is_object());
+    EXPECT_TRUE(session.plan.metadata.empty());
 }

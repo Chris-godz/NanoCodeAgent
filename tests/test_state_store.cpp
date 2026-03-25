@@ -60,6 +60,21 @@ TEST_F(StateStoreTest, JsonFileRoundTrip) {
     session.turn_index = 2;
     session.counters.llm_turns = 2;
     session.counters.tool_calls_requested = 1;
+    EXPECT_EQ(session.plan.generation, 1);
+    session.plan.summary = "prepare planning state";
+    session.plan.steps.push_back(PlanStep{
+        .id = "step-1",
+        .title = "define state skeleton",
+        .status = "completed",
+        .detail = "keep it small",
+        .metadata = nlohmann::json{{"phase", "p2-04a1"}}
+    });
+    session.trace.push_back(TraceEvent{
+        .kind = "note",
+        .message = "planner not wired yet",
+        .created_at = state_now_timestamp(),
+        .payload = nlohmann::json{{"reason", "intentional"}}
+    });
 
     ToolCall call;
     call.id = "call_read";
@@ -105,6 +120,12 @@ TEST_F(StateStoreTest, JsonFileRoundTrip) {
     ASSERT_EQ(loaded.mcp_tool_call_observations.size(), 1u);
     EXPECT_EQ(loaded.mcp_tool_call_observations[0].server_name, "alpha");
     EXPECT_EQ(loaded.mcp_tool_call_observations[0].tool_name, "adder");
+    EXPECT_EQ(loaded.plan.summary, "prepare planning state");
+    EXPECT_EQ(loaded.plan.generation, 1);
+    ASSERT_EQ(loaded.plan.steps.size(), 1u);
+    EXPECT_EQ(loaded.plan.steps[0].status, "completed");
+    ASSERT_EQ(loaded.trace.size(), 1u);
+    EXPECT_EQ(loaded.trace[0].kind, "note");
 }
 
 TEST_F(StateStoreTest, ToolCallAppendAndFinish) {
@@ -125,6 +146,28 @@ TEST_F(StateStoreTest, ToolCallAppendAndFinish) {
     finish_tool_call_record(session, record_index, "ok");
     EXPECT_EQ(session.tool_calls[0].status, "ok");
     EXPECT_FALSE(session.tool_calls[0].finished_at.empty());
+}
+
+TEST_F(StateStoreTest, SkippedToolCallRoundTripPreservesEmptyStartedAt) {
+    JsonFileStateStore store((temp_dir / "skipped-session.json").string());
+
+    SessionState session = make_session_state();
+    ToolCall call;
+    call.id = "call_skip";
+    call.name = "write_file_safe";
+    call.arguments = nlohmann::json{{"path", "ignored.txt"}, {"content", "x"}};
+
+    append_skipped_tool_call_record(session, 4, call);
+
+    std::string save_err;
+    ASSERT_TRUE(store.save(session, &save_err)) << save_err;
+
+    const StateStoreLoadResult load_result = store.load();
+    ASSERT_EQ(load_result.status, StateStoreLoadStatus::Loaded) << load_result.error;
+    ASSERT_EQ(load_result.session.tool_calls.size(), 1u);
+    EXPECT_EQ(load_result.session.tool_calls[0].status, "skipped");
+    EXPECT_TRUE(load_result.session.tool_calls[0].started_at.empty());
+    EXPECT_FALSE(load_result.session.tool_calls[0].finished_at.empty());
 }
 
 TEST_F(StateStoreTest, ObservationAppend) {
@@ -201,4 +244,17 @@ TEST_F(StateStoreTest, SaveFailureLeavesPreviousFileIntact) {
 
     const std::string after_contents = read_file_text(session_path);
     EXPECT_EQ(after_contents, before_contents);
+}
+
+TEST_F(StateStoreTest, SaveRejectsInvalidSessionStateBeforeWriting) {
+    const fs::path session_path = temp_dir / "invalid.json";
+    JsonFileStateStore store(session_path.string());
+
+    SessionState session = make_session_state();
+    session.plan.metadata = nlohmann::json::array({"bad"});
+
+    std::string save_err;
+    EXPECT_FALSE(store.save(session, &save_err));
+    EXPECT_NE(save_err.find("Invalid session state for save"), std::string::npos);
+    EXPECT_FALSE(fs::exists(session_path));
 }

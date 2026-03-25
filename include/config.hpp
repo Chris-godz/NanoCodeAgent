@@ -22,6 +22,8 @@ struct AgentConfig {
     std::optional<std::string> mock_fixture;
     std::optional<std::string> system_prompt_file;
     std::optional<std::string> session_file;
+    bool detail_mode = false;
+    std::optional<std::string> trace_jsonl;
     std::vector<std::string> mcp_servers;
     bool dry_run = false;
 

@@ -23,6 +23,7 @@ set(TEST_SOURCES
     ../src/mcp_tool_bridge.cpp
     ../src/state.cpp
     ../src/state_store.cpp
+    ../src/trace.cpp
 )
 
 # CLI Test
@@ -148,6 +149,16 @@ add_executable(test_state_store test_state_store.cpp ${TEST_SOURCES})
 target_link_libraries(test_state_store PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_state_store PRIVATE ../include)
 gtest_discover_tests(test_state_store)
+
+add_executable(test_state test_state.cpp ${TEST_SOURCES})
+target_link_libraries(test_state PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_state PRIVATE ../include)
+gtest_discover_tests(test_state)
+
+add_executable(test_detail_mode test_detail_mode.cpp ${TEST_SOURCES})
+target_link_libraries(test_detail_mode PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_detail_mode PRIVATE ../include)
+gtest_discover_tests(test_detail_mode)
 
 add_executable(test_state_integration test_state_integration.cpp ${TEST_SOURCES})
 target_link_libraries(test_state_integration PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
