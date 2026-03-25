@@ -22,6 +22,7 @@ struct AgentConfig {
     std::optional<std::string> mock_fixture;
     std::optional<std::string> system_prompt_file;
     std::optional<std::string> session_file;
+    std::vector<std::string> mcp_servers;
     bool dry_run = false;
 
     // Agent limits / Brake system

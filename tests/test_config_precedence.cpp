@@ -18,6 +18,7 @@ protected:
         unsetenv("NCA_ALLOW_EXECUTION_TOOLS");
         unsetenv("NCA_SKILLS");
         unsetenv("NCA_SESSION_FILE");
+        unsetenv("NCA_MCP_SERVER");
 
         // Create a fake config file
         std::ofstream out("test_conf.ini");
@@ -30,6 +31,7 @@ protected:
         out << "allow_execution_tools = false\n";
         out << "skills = docgen-reviewer, docgen-fact-check\n";
         out << "session_file = conf-session.json\n";
+        out << "mcp_server = conf=python3 conf_server.py\n";
         out.close();
     }
 
@@ -51,6 +53,7 @@ TEST_F(ConfigPrecedenceTest, DefaultsOnly) {
     EXPECT_FALSE(cfg.allow_execution_tools);
     EXPECT_TRUE(cfg.enabled_skills.empty());
     EXPECT_FALSE(cfg.session_file.has_value());
+    EXPECT_TRUE(cfg.mcp_servers.empty());
 }
 
 TEST_F(ConfigPrecedenceTest, ConfigFileOverridesDefaults) {
@@ -71,6 +74,8 @@ TEST_F(ConfigPrecedenceTest, ConfigFileOverridesDefaults) {
     EXPECT_EQ(cfg.enabled_skills[1], "docgen-fact-check");
     ASSERT_TRUE(cfg.session_file.has_value());
     EXPECT_EQ(*cfg.session_file, "conf-session.json");
+    ASSERT_EQ(cfg.mcp_servers.size(), 1u);
+    EXPECT_EQ(cfg.mcp_servers[0], "conf=python3 conf_server.py");
 }
 
 TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
@@ -81,6 +86,7 @@ TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
     setenv("NCA_ALLOW_EXECUTION_TOOLS", "1", 1);
     setenv("NCA_SKILLS", "docgen-overview-writer,docgen-reviewer", 1);
     setenv("NCA_SESSION_FILE", "env-session.json", 1);
+    setenv("NCA_MCP_SERVER", "env=python3 env_server.py", 1);
     const char* argv[] = {"agent"};
     int argc = 1;
     AgentConfig cfg = config_init(argc, const_cast<char**>(argv));
@@ -97,6 +103,8 @@ TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
     EXPECT_EQ(cfg.enabled_skills[1], "docgen-reviewer");
     ASSERT_TRUE(cfg.session_file.has_value());
     EXPECT_EQ(*cfg.session_file, "env-session.json");
+    ASSERT_EQ(cfg.mcp_servers.size(), 1u);
+    EXPECT_EQ(cfg.mcp_servers[0], "env=python3 env_server.py");
 }
 
 TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
@@ -105,12 +113,14 @@ TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     setenv("NCA_ALLOW_MUTATING_TOOLS", "0", 1);
     setenv("NCA_SKILLS", "env-skill", 1);
     setenv("NCA_SESSION_FILE", "env-session.json", 1);
+    setenv("NCA_MCP_SERVER", "env=python3 env_server.py", 1);
 
     const char* argv[] = {
         "agent", "--model", "cli-gpt", "--allow-mutating-tools", "--skill", "cli-skill-one",
-        "--skill", "cli-skill-two", "--session-file", "cli-session.json", "-e", "test"
+        "--skill", "cli-skill-two", "--session-file", "cli-session.json",
+        "--mcp-server", "cli=python3 cli_server.py", "-e", "test"
     };
-    int argc = 12;
+    int argc = 14;
     
     // Config loader handles defaults, config file, and env
     AgentConfig cfg = config_init(argc, const_cast<char**>(argv));
@@ -121,6 +131,8 @@ TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     EXPECT_EQ(cfg.enabled_skills[0], "env-skill");
     ASSERT_TRUE(cfg.session_file.has_value());
     EXPECT_EQ(cfg.session_file.value(), "env-session.json");
+    ASSERT_EQ(cfg.mcp_servers.size(), 1u);
+    EXPECT_EQ(cfg.mcp_servers[0], "env=python3 env_server.py");
 
     // Parse CLI options
     cli_parse(argc, const_cast<char**>(argv), cfg);
@@ -133,4 +145,6 @@ TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     EXPECT_EQ(cfg.enabled_skills[1], "cli-skill-two");
     ASSERT_TRUE(cfg.session_file.has_value());
     EXPECT_EQ(cfg.session_file.value(), "cli-session.json");
+    ASSERT_EQ(cfg.mcp_servers.size(), 1u);
+    EXPECT_EQ(cfg.mcp_servers[0], "cli=python3 cli_server.py");
 }

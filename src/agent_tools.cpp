@@ -247,7 +247,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }, {"path"}),
         .max_output_bytes = kMaxReadBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             const std::string path = require_string_arg(cmd, "path", "read_file_safe");
             const auto res = read_file_safe(config.workspace_abs, path, output_limit);
             return nlohmann::json{
@@ -278,7 +278,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }, {"path", "content"}),
         .max_output_bytes = 8192,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t, const ToolExecutionContext*) {
             const std::string path = require_string_arg(cmd, "path", "write_file_safe");
             const std::string content = require_string_arg(cmd, "content", "write_file_safe");
             const auto res = write_file_safe(config.workspace_abs, path, content, kMaxWriteBytes);
@@ -308,7 +308,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }, {"command"}),
         .max_output_bytes = kMaxBashOutputBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             const std::string command = require_string_arg(cmd, "command", "bash_execute_safe");
             const int timeout_ms = parse_timeout_ms_arg(cmd, "timeout_ms", 5000);
             const auto res = bash_execute_safe(config.workspace_abs, command, timeout_ms, output_limit, output_limit);
@@ -352,7 +352,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }),
         .max_output_bytes = kMaxBashOutputBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             if (cmd.arguments.contains("target")) {
                 throw std::runtime_error("Argument 'target' is not supported by build_project_safe in v1.");
             }
@@ -395,7 +395,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }),
         .max_output_bytes = kMaxBashOutputBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             if (cmd.arguments.contains("filter")) {
                 throw std::runtime_error("Argument 'filter' is not supported by test_project_safe in v1.");
             }
@@ -450,7 +450,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }),
         .max_output_bytes = kMaxRepoOutputBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             return list_files_bounded(
                 config.workspace_abs,
                 optional_string_arg(cmd, "directory"),
@@ -487,7 +487,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }, {"query"}),
         .max_output_bytes = kMaxRepoOutputBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             return rg_search(
                 config.workspace_abs,
                 require_string_arg(cmd, "query", "rg_search"),
@@ -508,7 +508,7 @@ ToolRegistry build_default_tool_registry() {
         .skill_aliases = {"Read"},
         .json_schema = make_parameters_schema(nlohmann::json::object()),
         .max_output_bytes = kMaxRepoOutputBytes,
-        .execute = [](const ToolCall&, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall&, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             return git_status(config.workspace_abs, 0, output_limit);
         }
     });
@@ -528,7 +528,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }, {"pathspecs"}),
         .max_output_bytes = kMaxRepoOutputBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             const std::vector<std::string> pathspecs = optional_string_array_arg_strict(cmd, "pathspecs");
             return git_add(config.workspace_abs, pathspecs, output_limit);
         }
@@ -548,7 +548,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }, {"message"}),
         .max_output_bytes = kMaxRepoOutputBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             const std::string message = require_string_arg(cmd, "message", "git_commit");
             return git_commit(config.workspace_abs, message, output_limit);
         }
@@ -614,7 +614,7 @@ ToolRegistry build_default_tool_registry() {
             })}
         },
         .max_output_bytes = 8192,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t) -> nlohmann::json {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t, const ToolExecutionContext*) -> nlohmann::json {
             if (!cmd.arguments.contains("path")) {
                 return nlohmann::json{{"ok", false}, {"error", "Missing 'path' argument for apply_patch."}};
             }
@@ -774,7 +774,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }),
         .max_output_bytes = kMaxRepoOutputBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             bool cached = false;
             if (cmd.arguments.contains("cached")) {
                 const auto& v = cmd.arguments.at("cached");
@@ -823,7 +823,7 @@ ToolRegistry build_default_tool_registry() {
             }}
         }, {"rev"}),
         .max_output_bytes = kMaxRepoOutputBytes,
-        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit, const ToolExecutionContext*) {
             const std::string rev = require_string_arg(cmd, "rev", "git_show");
             bool patch = true;
             if (cmd.arguments.contains("patch")) {

@@ -271,7 +271,7 @@ TEST_F(BuildTestToolsTest, BuildProjectSafeHonorsRegistryOutputLimit) {
         {"max_output_bytes", 512}
     };
 
-    const json result = descriptor->execute(call, approved_config(), 40);
+    const json result = descriptor->execute(call, approved_config(), 40, nullptr);
     EXPECT_TRUE(result["ok"].get<bool>()) << result.dump();
     EXPECT_TRUE(result["truncated"].get<bool>()) << result.dump();
     EXPECT_LE(result["stdout"].get<std::string>().size(), 40u);
@@ -341,7 +341,7 @@ TEST_F(BuildTestToolsTest, TestProjectSafeHonorsRegistryOutputLimit) {
         {"max_output_bytes", 512}
     };
 
-    const json result = descriptor->execute(call, approved_config(), 48);
+    const json result = descriptor->execute(call, approved_config(), 48, nullptr);
     EXPECT_TRUE(result["ok"].get<bool>()) << result.dump();
     EXPECT_TRUE(result["truncated"].get<bool>()) << result.dump();
     EXPECT_LE(result["stdout"].get<std::string>().size(), 48u);

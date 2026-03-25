@@ -11,6 +11,14 @@
 
 #include <nlohmann/json.hpp>
 
+struct SessionState;
+
+struct ToolExecutionContext {
+    SessionState* session_state = nullptr;
+    int turn_index = 0;
+    std::string tool_call_id;
+};
+
 enum class ToolCategory {
     ReadOnly,
     Mutating,
@@ -20,7 +28,7 @@ enum class ToolCategory {
 std::string tool_category_to_string(ToolCategory category);
 
 struct ToolDescriptor {
-    using Executor = std::function<nlohmann::json(const ToolCall&, const AgentConfig&, size_t)>;
+    using Executor = std::function<nlohmann::json(const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*)>;
 
     std::string name;
     std::string description;
@@ -41,6 +49,9 @@ public:
     const ToolDescriptor* find(const std::string& name) const;
 
     std::string execute(const ToolCall& call, const AgentConfig& config) const;
+    std::string execute(const ToolCall& call,
+                        const AgentConfig& config,
+                        const ToolExecutionContext* context) const;
 
     nlohmann::json to_openai_schema() const;
 

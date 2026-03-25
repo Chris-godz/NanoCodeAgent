@@ -24,7 +24,7 @@ ToolDescriptor make_descriptor(const std::string& name,
     descriptor.requires_approval = requires_approval;
     descriptor.skill_aliases = std::move(skill_aliases);
     descriptor.json_schema = {{"type", "object"}};
-    descriptor.execute = [](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         return nlohmann::json{{"ok", true}};
     };
     return descriptor;
@@ -122,7 +122,7 @@ TEST(ToolRegistryTest, ReadOnlyToolExecutesWithoutApproval) {
     bool called = false;
 
     ToolDescriptor descriptor = make_descriptor("read", ToolCategory::ReadOnly, false, false, false);
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         called = true;
         return nlohmann::json{{"ok", true}, {"value", 1}};
     };
@@ -157,7 +157,7 @@ TEST(ToolRegistryTest, MutatingOnlyToolBlockedWithoutApproval) {
     bool called = false;
 
     ToolDescriptor descriptor = make_descriptor("write", ToolCategory::Mutating, true, false);
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         called = true;
         return nlohmann::json{{"ok", true}};
     };
@@ -185,7 +185,7 @@ TEST(ToolRegistryTest, ExecutionOnlyToolBlockedWithoutApproval) {
     bool called = false;
 
     ToolDescriptor descriptor = make_descriptor("exec", ToolCategory::Execution, false, true);
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         called = true;
         return nlohmann::json{{"ok", true}};
     };
@@ -213,7 +213,7 @@ TEST(ToolRegistryTest, DualRiskToolBlockedWhenBothApprovalsAreMissing) {
     bool called = false;
 
     ToolDescriptor descriptor = make_descriptor("git_commit", ToolCategory::Mutating, true, true);
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         called = true;
         return nlohmann::json{{"ok", true}};
     };
@@ -242,7 +242,7 @@ TEST(ToolRegistryTest, DualRiskToolBlockedWhenExecutionApprovalIsMissing) {
     bool called = false;
 
     ToolDescriptor descriptor = make_descriptor("git_commit", ToolCategory::Mutating, true, true);
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         called = true;
         return nlohmann::json{{"ok", true}};
     };
@@ -266,7 +266,7 @@ TEST(ToolRegistryTest, DualRiskToolBlockedWhenMutatingApprovalIsMissing) {
     bool called = false;
 
     ToolDescriptor descriptor = make_descriptor("git_commit", ToolCategory::Mutating, true, true);
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         called = true;
         return nlohmann::json{{"ok", true}};
     };
@@ -290,7 +290,7 @@ TEST(ToolRegistryTest, MutatingOnlyToolExecutesWhenApproved) {
     bool called = false;
 
     ToolDescriptor descriptor = make_descriptor("write", ToolCategory::Mutating, true, false);
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         called = true;
         return nlohmann::json{{"ok", true}};
     };
@@ -313,7 +313,7 @@ TEST(ToolRegistryTest, ExecutionOnlyToolExecutesWhenApproved) {
     bool called = false;
 
     ToolDescriptor descriptor = make_descriptor("exec", ToolCategory::Execution, false, true);
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         called = true;
         return nlohmann::json{{"ok", true}};
     };
@@ -336,7 +336,7 @@ TEST(ToolRegistryTest, DualRiskToolExecutesOnlyWhenBothApprovalsAreEnabled) {
     bool called = false;
 
     ToolDescriptor descriptor = make_descriptor("git_commit", ToolCategory::Mutating, true, true);
-    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t) {
+    descriptor.execute = [&](const ToolCall&, const AgentConfig&, size_t, const ToolExecutionContext*) {
         called = true;
         return nlohmann::json{{"ok", true}};
     };

@@ -42,6 +42,14 @@ static std::vector<std::string> split_csv_list(const std::string& value) {
     return items;
 }
 
+static std::optional<std::string> normalize_mcp_server_spec(std::string value) {
+    trim(value);
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    return value;
+}
+
 static void config_load_from_file(AgentConfig& config, const std::string& filepath) {
     std::ifstream file(filepath);
     if (!file.is_open()) {
@@ -78,6 +86,11 @@ static void config_load_from_file(AgentConfig& config, const std::string& filepa
         else if (key == "mock_fixture") config.mock_fixture = val;
         else if (key == "system_prompt_file") config.system_prompt_file = val;
         else if (key == "session_file") config.session_file = val;
+        else if (key == "mcp_server") {
+            if (auto normalized = normalize_mcp_server_spec(val)) {
+                config.mcp_servers.push_back(*normalized);
+            }
+        }
         else if (key == "dry_run") config.dry_run = parse_bool_like(val);
         else if (key == "allow_mutating_tools") config.allow_mutating_tools = parse_bool_like(val);
         else if (key == "allow_execution_tools") config.allow_execution_tools = parse_bool_like(val);
@@ -100,6 +113,13 @@ static void config_apply_env(AgentConfig& config) {
     if (const char* v = std::getenv("NCA_MOCK_FIXTURE")) config.mock_fixture = v;
     if (const char* v = std::getenv("NCA_SYSTEM_PROMPT_FILE")) config.system_prompt_file = v;
     if (const char* v = std::getenv("NCA_SESSION_FILE")) config.session_file = v;
+    if (const char* v = std::getenv("NCA_MCP_SERVER")) {
+        if (auto normalized = normalize_mcp_server_spec(v)) {
+            config.mcp_servers = {*normalized};
+        } else {
+            config.mcp_servers.clear();
+        }
+    }
     if (const char* v = std::getenv("NCA_DRY_RUN")) config.dry_run = parse_bool_like(v);
     if (const char* v = std::getenv("NCA_ALLOW_MUTATING_TOOLS")) config.allow_mutating_tools = parse_bool_like(v);
     if (const char* v = std::getenv("NCA_ALLOW_EXECUTION_TOOLS")) config.allow_execution_tools = parse_bool_like(v);

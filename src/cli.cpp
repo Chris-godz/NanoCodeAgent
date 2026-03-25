@@ -17,6 +17,7 @@ void print_help() {
               << "  --mock-fixture <path>    Path to mock fixture file when in mock mode (Env: NCA_MOCK_FIXTURE)\n"
               << "  --system-prompt-file <path> Custom system prompt file (Env: NCA_SYSTEM_PROMPT_FILE)\n"
               << "  --session-file <path>    Persist session state to a JSON file (Env: NCA_SESSION_FILE)\n"
+              << "  --mcp-server <name=cmd>  Enable an MCP stdio server command (repeatable, Env: NCA_MCP_SERVER)\n"
               << "  --dry-run                Print what would be sent without making network requests (Env: NCA_DRY_RUN)\n"
               << "  --allow-mutating-tools   Allow approval-required mutating tools (Env: NCA_ALLOW_MUTATING_TOOLS)\n"
               << "  --allow-execution-tools  Allow approval-required execution tools (Env: NCA_ALLOW_EXECUTION_TOOLS)\n"
@@ -62,6 +63,7 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
         {"allow-execution-tools", no_argument, nullptr, 3005},
         {"skill", required_argument, nullptr, 3006},
         {"session-file", required_argument, nullptr, 3007},
+        {"mcp-server", required_argument, nullptr, 3008},
         {nullptr, no_argument, nullptr, 0}
     };
 
@@ -70,6 +72,7 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
 
     int opt;
     bool saw_skill_flag = false;
+    bool saw_mcp_server_flag = false;
     while ((opt = getopt_long(argc, argv, short_opts, long_opts, nullptr)) != -1) {
         switch (opt) {
             case 'h':
@@ -125,6 +128,13 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
                 break;
             case 3007:
                 config.session_file = optarg;
+                break;
+            case 3008:
+                if (!saw_mcp_server_flag) {
+                    config.mcp_servers.clear();
+                    saw_mcp_server_flag = true;
+                }
+                config.mcp_servers.push_back(optarg);
                 break;
             case 3003:
                 config.dry_run = true;

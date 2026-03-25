@@ -135,6 +135,90 @@ bool parse_observation_record(const nlohmann::json& json_value, ObservationRecor
     return true;
 }
 
+bool parse_mcp_server_record(const nlohmann::json& json_value, McpServerRecord* out, std::string* err) {
+    if (!json_value.is_object()) {
+        if (err) {
+            *err = "McpServerRecord entries must be JSON objects.";
+        }
+        return false;
+    }
+
+    McpServerRecord record;
+    if (!read_string_field(json_value, "server_name", &record.server_name, err, true) ||
+        !read_string_field(json_value,
+                           "negotiated_protocol_version",
+                           &record.negotiated_protocol_version,
+                           err,
+                           true)) {
+        return false;
+    }
+    if (json_value.contains("command") &&
+        !read_string_field(json_value, "command", nullptr, err, false)) {
+        return false;
+    }
+
+    if (json_value.contains("capabilities")) {
+        if (!json_value.at("capabilities").is_object()) {
+            if (err) {
+                *err = "Field 'capabilities' must be an object.";
+            }
+            return false;
+        }
+        record.capabilities = json_value.at("capabilities");
+    }
+
+    if (json_value.contains("tool_cache")) {
+        if (!json_value.at("tool_cache").is_array()) {
+            if (err) {
+                *err = "Field 'tool_cache' must be an array.";
+            }
+            return false;
+        }
+        record.tool_cache = json_value.at("tool_cache");
+    }
+
+    if (out) {
+        *out = std::move(record);
+    }
+    return true;
+}
+
+bool parse_mcp_tool_call_observation_record(const nlohmann::json& json_value,
+                                            McpToolCallObservationRecord* out,
+                                            std::string* err) {
+    if (!json_value.is_object()) {
+        if (err) {
+            *err = "McpToolCallObservationRecord entries must be JSON objects.";
+        }
+        return false;
+    }
+
+    McpToolCallObservationRecord record;
+    if (!read_int_field(json_value, "turn_index", &record.turn_index, err, true) ||
+        !read_string_field(json_value, "tool_call_id", &record.tool_call_id, err, true) ||
+        !read_string_field(json_value, "server_name", &record.server_name, err, true) ||
+        !read_string_field(json_value, "tool_name", &record.tool_name, err, true) ||
+        !read_string_field(json_value, "status", &record.status, err, true) ||
+        !read_string_field(json_value, "created_at", &record.created_at, err, true)) {
+        return false;
+    }
+
+    if (json_value.contains("result")) {
+        if (!json_value.at("result").is_object()) {
+            if (err) {
+                *err = "Field 'result' must be an object.";
+            }
+            return false;
+        }
+        record.result = json_value.at("result");
+    }
+
+    if (out) {
+        *out = std::move(record);
+    }
+    return true;
+}
+
 bool validate_messages_array(const nlohmann::json& messages, std::string* err) {
     if (!messages.is_array()) {
         if (err) {
@@ -283,6 +367,30 @@ void append_observation_record(SessionState& session,
     touch_session(session);
 }
 
+void set_session_mcp_servers(SessionState& session, const std::vector<McpServerRecord>& mcp_servers) {
+    session.mcp_servers = mcp_servers;
+    touch_session(session);
+}
+
+void append_mcp_tool_call_observation(SessionState& session,
+                                      int turn_index,
+                                      const std::string& tool_call_id,
+                                      const std::string& server_name,
+                                      const std::string& tool_name,
+                                      const std::string& status,
+                                      const nlohmann::json& result) {
+    McpToolCallObservationRecord record;
+    record.turn_index = turn_index;
+    record.tool_call_id = tool_call_id;
+    record.server_name = server_name;
+    record.tool_name = tool_name;
+    record.status = status;
+    record.result = result.is_object() ? result : nlohmann::json::object();
+    record.created_at = state_now_timestamp();
+    session.mcp_tool_call_observations.push_back(std::move(record));
+    touch_session(session);
+}
+
 std::string tool_call_status_from_output(const std::string& output) {
     try {
         const nlohmann::json parsed = nlohmann::json::parse(output);
@@ -406,6 +514,44 @@ bool session_state_from_json(const nlohmann::json& json_value, SessionState* out
         }
     }
 
+    if (json_value.contains("mcp_servers")) {
+        const auto& mcp_servers = json_value.at("mcp_servers");
+        if (!mcp_servers.is_array()) {
+            if (err) {
+                *err = "Field 'mcp_servers' must be an array.";
+            }
+            return false;
+        }
+        session.mcp_servers.clear();
+        session.mcp_servers.reserve(mcp_servers.size());
+        for (const auto& item : mcp_servers) {
+            McpServerRecord record;
+            if (!parse_mcp_server_record(item, &record, err)) {
+                return false;
+            }
+            session.mcp_servers.push_back(std::move(record));
+        }
+    }
+
+    if (json_value.contains("mcp_tool_call_observations")) {
+        const auto& observations = json_value.at("mcp_tool_call_observations");
+        if (!observations.is_array()) {
+            if (err) {
+                *err = "Field 'mcp_tool_call_observations' must be an array.";
+            }
+            return false;
+        }
+        session.mcp_tool_call_observations.clear();
+        session.mcp_tool_call_observations.reserve(observations.size());
+        for (const auto& item : observations) {
+            McpToolCallObservationRecord record;
+            if (!parse_mcp_tool_call_observation_record(item, &record, err)) {
+                return false;
+            }
+            session.mcp_tool_call_observations.push_back(std::move(record));
+        }
+    }
+
     if (json_value.contains("counters")) {
         const auto& counters = json_value.at("counters");
         if (!counters.is_object()) {
@@ -497,6 +643,29 @@ nlohmann::json session_state_to_json(const SessionState& session) {
         });
     }
 
+    nlohmann::json mcp_servers = nlohmann::json::array();
+    for (const McpServerRecord& record : session.mcp_servers) {
+        mcp_servers.push_back({
+            {"server_name", record.server_name},
+            {"negotiated_protocol_version", record.negotiated_protocol_version},
+            {"capabilities", record.capabilities},
+            {"tool_cache", record.tool_cache}
+        });
+    }
+
+    nlohmann::json mcp_tool_call_observations = nlohmann::json::array();
+    for (const McpToolCallObservationRecord& record : session.mcp_tool_call_observations) {
+        mcp_tool_call_observations.push_back({
+            {"turn_index", record.turn_index},
+            {"tool_call_id", record.tool_call_id},
+            {"server_name", record.server_name},
+            {"tool_name", record.tool_name},
+            {"status", record.status},
+            {"result", record.result},
+            {"created_at", record.created_at}
+        });
+    }
+
     return nlohmann::json{
         {"schema_version", kSessionStateSchemaVersion},
         {"session_id", session.session_id},
@@ -506,6 +675,8 @@ nlohmann::json session_state_to_json(const SessionState& session) {
         {"messages", session.messages},
         {"tool_calls", tool_calls},
         {"observations", observations},
+        {"mcp_servers", mcp_servers},
+        {"mcp_tool_call_observations", mcp_tool_call_observations},
         {"counters", {
             {"llm_turns", session.counters.llm_turns},
             {"tool_calls_requested", session.counters.tool_calls_requested},

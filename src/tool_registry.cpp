@@ -133,6 +133,12 @@ const ToolDescriptor* ToolRegistry::find(const std::string& name) const {
 }
 
 std::string ToolRegistry::execute(const ToolCall& call, const AgentConfig& config) const {
+    return execute(call, config, nullptr);
+}
+
+std::string ToolRegistry::execute(const ToolCall& call,
+                                  const AgentConfig& config,
+                                  const ToolExecutionContext* context) const {
     const ToolDescriptor* descriptor = find(call.name);
     if (!descriptor) {
         return make_registry_error("Tool '" + call.name + "' is not registered.").dump();
@@ -145,7 +151,7 @@ std::string ToolRegistry::execute(const ToolCall& call, const AgentConfig& confi
     }
 
     try {
-        nlohmann::json result = descriptor->execute(call, config, output_limit);
+        nlohmann::json result = descriptor->execute(call, config, output_limit, context);
         if (!result.is_object()) {
             return make_registry_error("Tool '" + call.name + "' returned a non-object result.").dump();
         }

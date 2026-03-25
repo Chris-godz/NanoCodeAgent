@@ -27,6 +27,23 @@ struct ObservationRecord {
     std::string created_at;
 };
 
+struct McpServerRecord {
+    std::string server_name;
+    std::string negotiated_protocol_version;
+    nlohmann::json capabilities = nlohmann::json::object();
+    nlohmann::json tool_cache = nlohmann::json::array();
+};
+
+struct McpToolCallObservationRecord {
+    int turn_index = 0;
+    std::string tool_call_id;
+    std::string server_name;
+    std::string tool_name;
+    std::string status;
+    nlohmann::json result = nlohmann::json::object();
+    std::string created_at;
+};
+
 struct SessionCounters {
     int llm_turns = 0;
     int tool_calls_requested = 0;
@@ -41,6 +58,8 @@ struct SessionState {
     nlohmann::json messages = nlohmann::json::array();
     std::vector<ToolCallRecord> tool_calls;
     std::vector<ObservationRecord> observations;
+    std::vector<McpServerRecord> mcp_servers;
+    std::vector<McpToolCallObservationRecord> mcp_tool_call_observations;
     SessionCounters counters;
     std::string scratchpad;
     std::vector<std::string> active_skills;
@@ -64,6 +83,14 @@ void append_observation_record(SessionState& session,
                                const std::string& tool_call_id,
                                const std::string& tool_name,
                                const std::string& content);
+void set_session_mcp_servers(SessionState& session, const std::vector<McpServerRecord>& mcp_servers);
+void append_mcp_tool_call_observation(SessionState& session,
+                                      int turn_index,
+                                      const std::string& tool_call_id,
+                                      const std::string& server_name,
+                                      const std::string& tool_name,
+                                      const std::string& status,
+                                      const nlohmann::json& result);
 std::string tool_call_status_from_output(const std::string& output);
 nlohmann::json make_active_rules_snapshot(const AgentConfig& config);
 bool session_state_from_json(const nlohmann::json& json_value, SessionState* out, std::string* err);

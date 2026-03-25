@@ -439,9 +439,11 @@ void agent_run(const AgentConfig& config,
                const std::string& user_prompt, 
                const nlohmann::json& tools_registry,
                LLMStreamFunc llm_func,
-               SessionState* session_state) {
+               SessionState* session_state,
+               const ToolRegistry* tool_registry) {
     nlohmann::json local_messages = nlohmann::json::array();
     nlohmann::json& messages = session_state != nullptr ? session_state->messages : local_messages;
+    const ToolRegistry& runtime_registry = tool_registry != nullptr ? *tool_registry : get_default_tool_registry();
 
     if (session_state != nullptr) {
         if (!messages.is_array()) {
@@ -552,8 +554,20 @@ void agent_run(const AgentConfig& config,
             if (session_state != nullptr) {
                 tool_record_index = append_tool_call_record(*session_state, turns, tc);
             }
+
+            ToolExecutionContext execution_context;
+            if (session_state != nullptr) {
+                execution_context.session_state = session_state;
+                execution_context.turn_index = turns;
+                execution_context.tool_call_id = tc.id.empty()
+                    ? std::string("call_") + std::to_string(tc.index)
+                    : tc.id;
+            }
             
-            const std::string raw_output = execute_tool(tc, config);
+            const std::string raw_output = runtime_registry.execute(
+                tc,
+                config,
+                session_state != nullptr ? &execution_context : nullptr);
             const ToolFailureAnalysis analysis = analyze_tool_result(tc, raw_output);
             std::string output = raw_output;
             

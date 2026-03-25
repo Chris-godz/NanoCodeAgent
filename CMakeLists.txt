@@ -61,6 +61,9 @@ set(SOURCES
     src/skill_loader.cpp
     src/apply_patch.cpp
     src/agent_loop.cpp
+    src/mcp.cpp
+    src/mcp_transport_stdio.cpp
+    src/mcp_tool_bridge.cpp
     src/state.cpp
     src/state_store.cpp
 )

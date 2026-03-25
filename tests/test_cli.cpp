@@ -105,3 +105,20 @@ TEST_F(CliTest, ParseSessionFile) {
     ASSERT_TRUE(config.session_file.has_value());
     EXPECT_EQ(*config.session_file, "tmp/session.json");
 }
+
+TEST_F(CliTest, ParseRepeatableMcpServerFlags) {
+    AgentConfig config;
+    config.mcp_servers = {"from-env=python3 old.py"};
+    const char* argv[] = {
+        "agent",
+        "-e", "mcp task",
+        "--mcp-server", "alpha=python3 server_a.py",
+        "--mcp-server", "beta=python3 server_b.py"
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
+
+    EXPECT_EQ(cli_parse(argc, const_cast<char**>(argv), config), CliResult::Success);
+    ASSERT_EQ(config.mcp_servers.size(), 2u);
+    EXPECT_EQ(config.mcp_servers[0], "alpha=python3 server_a.py");
+    EXPECT_EQ(config.mcp_servers[1], "beta=python3 server_b.py");
+}

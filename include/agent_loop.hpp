@@ -2,6 +2,7 @@
 
 #include "config.hpp"
 #include "state.hpp"
+#include "tool_registry.hpp"
 #include <string>
 #include <nlohmann/json.hpp>
 #include <functional>
@@ -24,4 +25,5 @@ void agent_run(const AgentConfig& config,
                const std::string& user_prompt, 
                const nlohmann::json& tools_registry,
                LLMStreamFunc llm_func,
-               SessionState* session_state = nullptr);
+               SessionState* session_state = nullptr,
+               const ToolRegistry* tool_registry = nullptr);

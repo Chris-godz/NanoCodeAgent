@@ -18,6 +18,9 @@ set(TEST_SOURCES
     ../src/skill_loader.cpp
     ../src/apply_patch.cpp
     ../src/agent_loop.cpp
+    ../src/mcp.cpp
+    ../src/mcp_transport_stdio.cpp
+    ../src/mcp_tool_bridge.cpp
     ../src/state.cpp
     ../src/state_store.cpp
 )
@@ -150,3 +153,13 @@ add_executable(test_state_integration test_state_integration.cpp ${TEST_SOURCES}
 target_link_libraries(test_state_integration PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_state_integration PRIVATE ../include)
 gtest_discover_tests(test_state_integration)
+
+add_executable(test_mcp_transport test_mcp_transport.cpp ${TEST_SOURCES})
+target_link_libraries(test_mcp_transport PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_mcp_transport PRIVATE ../include)
+gtest_discover_tests(test_mcp_transport)
+
+add_executable(test_mcp_integration test_mcp_integration.cpp ${TEST_SOURCES})
+target_link_libraries(test_mcp_integration PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_mcp_integration PRIVATE ../include)
+gtest_discover_tests(test_mcp_integration)

@@ -47,6 +47,16 @@ TEST_F(StateStoreTest, JsonFileRoundTrip) {
                           nlohmann::json{{"allow_execution_tools", true}});
     seed_session_messages_if_empty(session, "system prompt", "user prompt");
     set_session_scratchpad(session, "working");
+    set_session_mcp_servers(session, {
+        McpServerRecord{
+            .server_name = "alpha",
+            .negotiated_protocol_version = "2024-11-05",
+            .capabilities = nlohmann::json{{"tools", {}}},
+            .tool_cache = nlohmann::json::array({
+                nlohmann::json{{"remote_name", "adder"}, {"local_name", "mcp.alpha.adder"}}
+            })
+        }
+    });
     session.turn_index = 2;
     session.counters.llm_turns = 2;
     session.counters.tool_calls_requested = 1;
@@ -59,6 +69,13 @@ TEST_F(StateStoreTest, JsonFileRoundTrip) {
     const std::size_t record_index = append_tool_call_record(session, 2, call);
     finish_tool_call_record(session, record_index, "ok");
     append_observation_record(session, 2, call.id, call.name, "{\"ok\":true}");
+    append_mcp_tool_call_observation(session,
+                                     2,
+                                     "call_mcp",
+                                     "alpha",
+                                     "adder",
+                                     "ok",
+                                     nlohmann::json{{"ok", true}, {"status", "ok"}});
 
     std::string save_err;
     ASSERT_TRUE(store.save(session, &save_err)) << save_err;
@@ -77,11 +94,17 @@ TEST_F(StateStoreTest, JsonFileRoundTrip) {
     EXPECT_EQ(loaded.active_skills[0], "docgen-reviewer");
     EXPECT_EQ(loaded.active_rules_snapshot["allow_execution_tools"], true);
     EXPECT_EQ(loaded.messages.dump(), session.messages.dump());
+    ASSERT_EQ(loaded.mcp_servers.size(), 1u);
+    EXPECT_EQ(loaded.mcp_servers[0].server_name, "alpha");
+    EXPECT_EQ(loaded.mcp_servers[0].tool_cache.size(), 1u);
     ASSERT_EQ(loaded.tool_calls.size(), 1u);
     EXPECT_EQ(loaded.tool_calls[0].tool_name, "read_file_safe");
     EXPECT_EQ(loaded.tool_calls[0].status, "ok");
     ASSERT_EQ(loaded.observations.size(), 1u);
     EXPECT_EQ(loaded.observations[0].content, "{\"ok\":true}");
+    ASSERT_EQ(loaded.mcp_tool_call_observations.size(), 1u);
+    EXPECT_EQ(loaded.mcp_tool_call_observations[0].server_name, "alpha");
+    EXPECT_EQ(loaded.mcp_tool_call_observations[0].tool_name, "adder");
 }
 
 TEST_F(StateStoreTest, ToolCallAppendAndFinish) {

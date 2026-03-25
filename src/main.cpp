@@ -3,6 +3,7 @@
 #include "logger.hpp"
 #include "agent_loop.hpp"
 #include "agent_tools.hpp"
+#include "mcp.hpp"
 #include "skill_loader.hpp"
 #include "llm.hpp"
 #include "state.hpp"
@@ -76,8 +77,50 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
+    std::unique_ptr<StateStore> state_store;
+    if (config.session_file.has_value()) {
+        state_store = std::make_unique<JsonFileStateStore>(config.session_file.value());
+    } else {
+        state_store = std::make_unique<InMemoryStateStore>();
+    }
+
+    SessionState session_state;
+    const StateStoreLoadResult load_result = state_store->load();
+    if (load_result.status == StateStoreLoadStatus::Error) {
+        LOG_ERROR("Could not load session state: {}", load_result.error);
+        return EXIT_FAILURE;
+    }
+    if (load_result.status == StateStoreLoadStatus::Loaded) {
+        session_state = load_result.session;
+        LOG_INFO("Loaded session state: {}", session_state.session_id);
+    } else {
+        session_state = make_session_state();
+        LOG_INFO("Created new session state: {}", session_state.session_id);
+    }
+
     // 4. Set up the foundational Agent Loop objects
-    const ToolRegistry& registry = get_default_tool_registry();
+    ToolRegistry registry = get_default_tool_registry();
+    McpSession mcp_session(config.workspace_abs);
+    if (!config.mcp_servers.empty()) {
+        if (!config.allow_execution_tools) {
+            LOG_ERROR("Refusing to start MCP servers without execution approval. MCP stdio startup launches local processes and is treated as a controlled local execution surface.");
+            return EXIT_FAILURE;
+        }
+        std::string mcp_err;
+        if (!mcp_session.start(config.mcp_servers, &session_state, &mcp_err)) {
+            LOG_ERROR("Could not start MCP session: {}", mcp_err);
+            return EXIT_FAILURE;
+        }
+
+        McpToolBridge mcp_bridge(&mcp_session);
+        if (!mcp_bridge.register_tools(&registry, &mcp_err)) {
+            LOG_ERROR("Could not register MCP tools: {}", mcp_err);
+            return EXIT_FAILURE;
+        }
+    } else {
+        set_session_mcp_servers(session_state, {});
+    }
+
     SkillLoader skill_loader(registry);
     SkillRuntimeContext skill_context;
     std::string skill_err;
@@ -112,27 +155,6 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     nlohmann::json tools = registry.to_openai_schema(config);
-
-    std::unique_ptr<StateStore> state_store;
-    if (config.session_file.has_value()) {
-        state_store = std::make_unique<JsonFileStateStore>(config.session_file.value());
-    } else {
-        state_store = std::make_unique<InMemoryStateStore>();
-    }
-
-    SessionState session_state;
-    const StateStoreLoadResult load_result = state_store->load();
-    if (load_result.status == StateStoreLoadStatus::Error) {
-        LOG_ERROR("Could not load session state: {}", load_result.error);
-        return EXIT_FAILURE;
-    }
-    if (load_result.status == StateStoreLoadStatus::Loaded) {
-        session_state = load_result.session;
-        LOG_INFO("Loaded session state: {}", session_state.session_id);
-    } else {
-        session_state = make_session_state();
-        LOG_INFO("Created new session state: {}", session_state.session_id);
-    }
     prepare_session_state(session_state, enabled_skill_names, make_active_rules_snapshot(config));
 
     if (config.dry_run) {
@@ -202,7 +224,7 @@ int main(int argc, char* argv[]) {
     // 5. Run the Agent Loop
     int exit_code = EXIT_SUCCESS;
     try {
-        agent_run(config, sys_prompt, config.prompt, tools, llm_func, &session_state);
+        agent_run(config, sys_prompt, config.prompt, tools, llm_func, &session_state, &registry);
         LOG_INFO("Agent loop finished successfully.");
     } catch (const std::exception& e) {
         LOG_ERROR("Agent loop terminated with error: {}", e.what());
