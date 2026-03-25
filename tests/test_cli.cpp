@@ -91,3 +91,17 @@ TEST_F(CliTest, ParseRepeatableSkillFlags) {
     EXPECT_EQ(config.enabled_skills[0], "docgen-reviewer");
     EXPECT_EQ(config.enabled_skills[1], "docgen-fact-check");
 }
+
+TEST_F(CliTest, ParseSessionFile) {
+    AgentConfig config;
+    const char* argv[] = {
+        "agent",
+        "-e", "session task",
+        "--session-file", "tmp/session.json"
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
+
+    EXPECT_EQ(cli_parse(argc, const_cast<char**>(argv), config), CliResult::Success);
+    ASSERT_TRUE(config.session_file.has_value());
+    EXPECT_EQ(*config.session_file, "tmp/session.json");
+}

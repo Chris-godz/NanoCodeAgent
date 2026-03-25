@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config.hpp"
+#include "state.hpp"
 #include <string>
 #include <nlohmann/json.hpp>
 #include <functional>
@@ -22,4 +23,5 @@ void agent_run(const AgentConfig& config,
                const std::string& system_prompt, 
                const std::string& user_prompt, 
                const nlohmann::json& tools_registry,
-               LLMStreamFunc llm_func);
+               LLMStreamFunc llm_func,
+               SessionState* session_state = nullptr);

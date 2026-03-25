@@ -61,6 +61,8 @@ set(SOURCES
     src/skill_loader.cpp
     src/apply_patch.cpp
     src/agent_loop.cpp
+    src/state.cpp
+    src/state_store.cpp
 )
 
 # Main executable

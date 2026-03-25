@@ -397,30 +397,83 @@ void append_tool_message(nlohmann::json& messages,
     });
 }
 
+ToolCall parse_tool_call_json(const nlohmann::json& tc_json) {
+    ToolCall tc;
+    tc.id = tc_json.value("id", "");
+    tc.index = tc_json.value("index", 0);
+
+    if (!tc_json.contains("function")) {
+        return tc;
+    }
+
+    const auto& function_json = tc_json["function"];
+    tc.name = function_json.value("name", "");
+
+    if (!function_json.contains("arguments")) {
+        tc.raw_arguments = "{}";
+        tc.arguments = nlohmann::json::object();
+        return tc;
+    }
+
+    const auto& raw_arguments = function_json["arguments"];
+    try {
+        if (raw_arguments.is_string()) {
+            tc.raw_arguments = raw_arguments.get<std::string>();
+            tc.arguments = nlohmann::json::parse(tc.raw_arguments);
+        } else {
+            tc.arguments = raw_arguments;
+            tc.raw_arguments = raw_arguments.dump();
+        }
+    } catch (const nlohmann::json::exception& e) {
+        LOG_ERROR("Tool JSON parse failed for " + tc.name + ": " + e.what());
+        tc.arguments = nlohmann::json::object();
+    }
+
+    return tc;
+}
+
 }  // namespace
 
 void agent_run(const AgentConfig& config, 
                const std::string& system_prompt, 
                const std::string& user_prompt, 
                const nlohmann::json& tools_registry,
-               LLMStreamFunc llm_func) {
-    
-    nlohmann::json messages = nlohmann::json::array();
-    
-    if (!system_prompt.empty()) {
-        messages.push_back({{"role", "system"}, {"content", system_prompt}});
+               LLMStreamFunc llm_func,
+               SessionState* session_state) {
+    nlohmann::json local_messages = nlohmann::json::array();
+    nlohmann::json& messages = session_state != nullptr ? session_state->messages : local_messages;
+
+    if (session_state != nullptr) {
+        if (!messages.is_array()) {
+            messages = nlohmann::json::array();
+        }
+        seed_session_messages_if_empty(*session_state, system_prompt, user_prompt);
+    } else {
+        if (!system_prompt.empty()) {
+            messages.push_back({{"role", "system"}, {"content", system_prompt}});
+        }
+        messages.push_back({{"role", "user"}, {"content", user_prompt}});
     }
-    messages.push_back({{"role", "user"}, {"content", user_prompt}});
-    
-    int turns = 0;
-    int total_tool_calls = 0;
+
+    int turns = session_state != nullptr ? session_state->turn_index : 0;
+    int total_tool_calls = session_state != nullptr ? session_state->counters.tool_calls_requested : 0;
     std::unordered_map<std::string, int> failure_retry_counts;
     
     while (true) {
         turns++;
+        if (session_state != nullptr) {
+            session_state->turn_index = turns;
+            session_state->counters.llm_turns = turns;
+            set_session_scratchpad(*session_state,
+                                   "turn " + std::to_string(turns) + ": awaiting assistant response");
+        }
         if (turns > config.max_turns) {
             LOG_ERROR("Broker loop hit max_turns (" + std::to_string(config.max_turns) + "), aborting to prevent infinite loop.");
             std::cerr << "[Agent Error] Exceeded max standard turns.\n";
+            if (session_state != nullptr) {
+                set_session_scratchpad(*session_state,
+                                       "turn " + std::to_string(turns) + ": exceeded max_turns");
+            }
             break;
         }
         
@@ -435,14 +488,28 @@ void agent_run(const AgentConfig& config,
         } catch (const std::exception& e) {
             LOG_ERROR(std::string("LLM Execution failed: ") + e.what());
             std::cerr << "[Agent Error] LLM request failed: " << e.what() << "\n";
+            if (session_state != nullptr) {
+                set_session_scratchpad(*session_state,
+                                       "turn " + std::to_string(turns) + ": llm request failed");
+            }
             break;
         }
         
         messages.push_back(response_message);
+        if (session_state != nullptr) {
+            touch_session(*session_state);
+        }
         
         if (!response_message.contains("tool_calls") || response_message["tool_calls"].empty()) {
             LOG_INFO("No tool calls. Agent loop complete.");
             std::cout << "[Agent Complete] " << response_message.value("content", "") << "\n";
+            if (session_state != nullptr) {
+                const std::string content = response_message.value("content", "");
+                set_session_scratchpad(*session_state,
+                                       content.empty()
+                                           ? "turn " + std::to_string(turns) + ": completed"
+                                           : content);
+            }
             break;
         }
         
@@ -450,13 +517,27 @@ void agent_run(const AgentConfig& config,
         if (tool_calls.size() > config.max_tool_calls_per_turn) {
             LOG_ERROR("Too many tools requested in turn: " + std::to_string(tool_calls.size()));
             std::cerr << "[Agent Error] Tool flood detected, limit " << config.max_tool_calls_per_turn << ". Aborting.\n";
+            if (session_state != nullptr) {
+                set_session_scratchpad(*session_state,
+                                       "turn " + std::to_string(turns) + ": exceeded max_tool_calls_per_turn");
+            }
             break;
         }
         
         total_tool_calls += tool_calls.size();
+        if (session_state != nullptr) {
+            session_state->counters.tool_calls_requested = total_tool_calls;
+            set_session_scratchpad(*session_state,
+                                   "turn " + std::to_string(turns) + ": executing " +
+                                       std::to_string(tool_calls.size()) + " tool call(s)");
+        }
         if (total_tool_calls > config.max_total_tool_calls) {
             LOG_ERROR("Max total tool calls exceeded: " + std::to_string(total_tool_calls));
             std::cerr << "[Agent Error] Global tool call limit hit, aborting.\n";
+            if (session_state != nullptr) {
+                set_session_scratchpad(*session_state,
+                                       "turn " + std::to_string(turns) + ": exceeded max_total_tool_calls");
+            }
             break;
         }
 
@@ -465,17 +546,11 @@ void agent_run(const AgentConfig& config,
         // Ensure sequentially execute tools
         for (std::size_t tool_index = 0; tool_index < tool_calls.size(); ++tool_index) {
             const auto& tc_json = tool_calls[tool_index];
-            ToolCall tc;
-            tc.id = tc_json.value("id", "");
-            if (tc_json.contains("function")) {
-                tc.name = tc_json["function"].value("name", "");
-                auto raw_args = tc_json["function"].value("arguments", "{}");
-                try {
-                    tc.arguments = nlohmann::json::parse(raw_args);
-                } catch (...) {
-                    LOG_ERROR("Tool JSON parse failed for " + tc.name);
-                    tc.arguments = nlohmann::json::object(); // Continue to fail fast via dispatch
-                }
+            ToolCall tc = parse_tool_call_json(tc_json);
+
+            std::size_t tool_record_index = 0;
+            if (session_state != nullptr) {
+                tool_record_index = append_tool_call_record(*session_state, turns, tc);
             }
             
             const std::string raw_output = execute_tool(tc, config);
@@ -486,6 +561,14 @@ void agent_run(const AgentConfig& config,
             output = truncate_tool_output(output, config.max_tool_output_bytes);
             
             append_tool_message(messages, tc.id, tc.name, output);
+            if (session_state != nullptr) {
+                finish_tool_call_record(*session_state, tool_record_index, tool_call_status_from_output(raw_output));
+                append_observation_record(*session_state,
+                                          turns,
+                                          tc.id.empty() ? std::string("call_") + std::to_string(tc.index) : tc.id,
+                                          tc.name,
+                                          output);
+            }
             
             if (!analysis.is_failure) {
                 continue;
@@ -494,6 +577,10 @@ void agent_run(const AgentConfig& config,
             if (analysis.classification == ToolFailureClass::Fatal) {
                 LOG_ERROR("Tool failed fatally: " + output);
                 std::cerr << "[Agent Error] Tool " << tc.name << " failed fatally: " << output << "\n";
+                if (session_state != nullptr) {
+                    set_session_scratchpad(*session_state,
+                                           "turn " + std::to_string(turns) + ": fatal tool failure in " + tc.name);
+                }
                 state_contaminated = true;
                 break;
             }
@@ -503,6 +590,10 @@ void agent_run(const AgentConfig& config,
                 LOG_ERROR("Tool failure repeated beyond retry budget: " + output);
                 std::cerr << "[Agent Error] Tool " << tc.name
                           << " repeated the same recoverable failure and exceeded the retry budget.\n";
+                if (session_state != nullptr) {
+                    set_session_scratchpad(*session_state,
+                                           "turn " + std::to_string(turns) + ": retry budget exceeded for " + tc.name);
+                }
                 state_contaminated = true;
                 break;
             }
@@ -512,6 +603,10 @@ void agent_run(const AgentConfig& config,
                 {"role", "system"},
                 {"content", make_recovery_guidance_message(tc, analysis)}
             });
+            if (session_state != nullptr) {
+                set_session_scratchpad(*session_state,
+                                       "turn " + std::to_string(turns) + ": recoverable tool failure in " + tc.name);
+            }
             for (std::size_t skipped_index = tool_index + 1; skipped_index < tool_calls.size(); ++skipped_index) {
                 const auto& skipped_tc_json = tool_calls[skipped_index];
                 const std::string skipped_tool_call_id = skipped_tc_json.value("id", "");
@@ -519,13 +614,30 @@ void agent_run(const AgentConfig& config,
                 if (skipped_tc_json.contains("function")) {
                     skipped_name = skipped_tc_json["function"].value("name", "");
                 }
-                append_tool_message(messages, skipped_tool_call_id, skipped_name, make_skipped_tool_output());
+                const std::string skipped_output = make_skipped_tool_output();
+                append_tool_message(messages, skipped_tool_call_id, skipped_name, skipped_output);
+                if (session_state != nullptr) {
+                    const ToolCall skipped_tc = parse_tool_call_json(skipped_tc_json);
+                    const std::size_t skipped_record_index = append_tool_call_record(*session_state, turns, skipped_tc);
+                    finish_tool_call_record(*session_state, skipped_record_index, tool_call_status_from_output(skipped_output));
+                    append_observation_record(*session_state,
+                                              turns,
+                                              skipped_tool_call_id.empty()
+                                                  ? std::string("call_") + std::to_string(skipped_tc.index)
+                                                  : skipped_tool_call_id,
+                                              skipped_name,
+                                              skipped_output);
+                }
             }
             break;
         }
         
         if (state_contaminated) {
             std::cerr << "[Agent Error] Run stopped due to state contamination (tool failure or timeout).\n";
+            if (session_state != nullptr && session_state->scratchpad.empty()) {
+                set_session_scratchpad(*session_state,
+                                       "turn " + std::to_string(turns) + ": state contamination");
+            }
             break;
         }
     }

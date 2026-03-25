@@ -17,6 +17,7 @@ protected:
         unsetenv("NCA_ALLOW_MUTATING_TOOLS");
         unsetenv("NCA_ALLOW_EXECUTION_TOOLS");
         unsetenv("NCA_SKILLS");
+        unsetenv("NCA_SESSION_FILE");
 
         // Create a fake config file
         std::ofstream out("test_conf.ini");
@@ -28,6 +29,7 @@ protected:
         out << "allow_mutating_tools = true\n";
         out << "allow_execution_tools = false\n";
         out << "skills = docgen-reviewer, docgen-fact-check\n";
+        out << "session_file = conf-session.json\n";
         out.close();
     }
 
@@ -48,6 +50,7 @@ TEST_F(ConfigPrecedenceTest, DefaultsOnly) {
     EXPECT_FALSE(cfg.allow_mutating_tools);
     EXPECT_FALSE(cfg.allow_execution_tools);
     EXPECT_TRUE(cfg.enabled_skills.empty());
+    EXPECT_FALSE(cfg.session_file.has_value());
 }
 
 TEST_F(ConfigPrecedenceTest, ConfigFileOverridesDefaults) {
@@ -66,6 +69,8 @@ TEST_F(ConfigPrecedenceTest, ConfigFileOverridesDefaults) {
     ASSERT_EQ(cfg.enabled_skills.size(), 2u);
     EXPECT_EQ(cfg.enabled_skills[0], "docgen-reviewer");
     EXPECT_EQ(cfg.enabled_skills[1], "docgen-fact-check");
+    ASSERT_TRUE(cfg.session_file.has_value());
+    EXPECT_EQ(*cfg.session_file, "conf-session.json");
 }
 
 TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
@@ -75,6 +80,7 @@ TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
     setenv("NCA_ALLOW_MUTATING_TOOLS", "0", 1);
     setenv("NCA_ALLOW_EXECUTION_TOOLS", "1", 1);
     setenv("NCA_SKILLS", "docgen-overview-writer,docgen-reviewer", 1);
+    setenv("NCA_SESSION_FILE", "env-session.json", 1);
     const char* argv[] = {"agent"};
     int argc = 1;
     AgentConfig cfg = config_init(argc, const_cast<char**>(argv));
@@ -89,6 +95,8 @@ TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
     ASSERT_EQ(cfg.enabled_skills.size(), 2u);
     EXPECT_EQ(cfg.enabled_skills[0], "docgen-overview-writer");
     EXPECT_EQ(cfg.enabled_skills[1], "docgen-reviewer");
+    ASSERT_TRUE(cfg.session_file.has_value());
+    EXPECT_EQ(*cfg.session_file, "env-session.json");
 }
 
 TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
@@ -96,12 +104,13 @@ TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     setenv("NCA_MODEL", "env-gpt", 1);
     setenv("NCA_ALLOW_MUTATING_TOOLS", "0", 1);
     setenv("NCA_SKILLS", "env-skill", 1);
+    setenv("NCA_SESSION_FILE", "env-session.json", 1);
 
     const char* argv[] = {
         "agent", "--model", "cli-gpt", "--allow-mutating-tools", "--skill", "cli-skill-one",
-        "--skill", "cli-skill-two", "-e", "test"
+        "--skill", "cli-skill-two", "--session-file", "cli-session.json", "-e", "test"
     };
-    int argc = 10;
+    int argc = 12;
     
     // Config loader handles defaults, config file, and env
     AgentConfig cfg = config_init(argc, const_cast<char**>(argv));
@@ -110,6 +119,8 @@ TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     EXPECT_FALSE(cfg.allow_mutating_tools);
     ASSERT_EQ(cfg.enabled_skills.size(), 1u);
     EXPECT_EQ(cfg.enabled_skills[0], "env-skill");
+    ASSERT_TRUE(cfg.session_file.has_value());
+    EXPECT_EQ(cfg.session_file.value(), "env-session.json");
 
     // Parse CLI options
     cli_parse(argc, const_cast<char**>(argv), cfg);
@@ -120,4 +131,6 @@ TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     ASSERT_EQ(cfg.enabled_skills.size(), 2u);
     EXPECT_EQ(cfg.enabled_skills[0], "cli-skill-one");
     EXPECT_EQ(cfg.enabled_skills[1], "cli-skill-two");
+    ASSERT_TRUE(cfg.session_file.has_value());
+    EXPECT_EQ(cfg.session_file.value(), "cli-session.json");
 }

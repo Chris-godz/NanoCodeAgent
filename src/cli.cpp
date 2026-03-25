@@ -16,6 +16,7 @@ void print_help() {
               << "  --mode <real|mock>       Run mode: real network or mock (Default: real, Env: NCA_MODE)\n"
               << "  --mock-fixture <path>    Path to mock fixture file when in mock mode (Env: NCA_MOCK_FIXTURE)\n"
               << "  --system-prompt-file <path> Custom system prompt file (Env: NCA_SYSTEM_PROMPT_FILE)\n"
+              << "  --session-file <path>    Persist session state to a JSON file (Env: NCA_SESSION_FILE)\n"
               << "  --dry-run                Print what would be sent without making network requests (Env: NCA_DRY_RUN)\n"
               << "  --allow-mutating-tools   Allow approval-required mutating tools (Env: NCA_ALLOW_MUTATING_TOOLS)\n"
               << "  --allow-execution-tools  Allow approval-required execution tools (Env: NCA_ALLOW_EXECUTION_TOOLS)\n"
@@ -60,6 +61,7 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
         {"allow-mutating-tools", no_argument, nullptr, 3004},
         {"allow-execution-tools", no_argument, nullptr, 3005},
         {"skill", required_argument, nullptr, 3006},
+        {"session-file", required_argument, nullptr, 3007},
         {nullptr, no_argument, nullptr, 0}
     };
 
@@ -120,6 +122,9 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
                 break;
             case 3002:
                 config.system_prompt_file = optarg;
+                break;
+            case 3007:
+                config.session_file = optarg;
                 break;
             case 3003:
                 config.dry_run = true;

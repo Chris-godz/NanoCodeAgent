@@ -21,6 +21,7 @@ struct AgentConfig {
     std::string mode = "real"; // "real" or "mock"
     std::optional<std::string> mock_fixture;
     std::optional<std::string> system_prompt_file;
+    std::optional<std::string> session_file;
     bool dry_run = false;
 
     // Agent limits / Brake system

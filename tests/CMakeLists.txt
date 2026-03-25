@@ -18,6 +18,8 @@ set(TEST_SOURCES
     ../src/skill_loader.cpp
     ../src/apply_patch.cpp
     ../src/agent_loop.cpp
+    ../src/state.cpp
+    ../src/state_store.cpp
 )
 
 # CLI Test
@@ -138,3 +140,13 @@ target_link_libraries(test_net_smoke PRIVATE GTest::gtest_main spdlog::spdlog CU
 target_include_directories(test_net_smoke PRIVATE ../include)
 # Setup net test properties
 gtest_discover_tests(test_net_smoke PROPERTIES LABELS "net")
+
+add_executable(test_state_store test_state_store.cpp ${TEST_SOURCES})
+target_link_libraries(test_state_store PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_state_store PRIVATE ../include)
+gtest_discover_tests(test_state_store)
+
+add_executable(test_state_integration test_state_integration.cpp ${TEST_SOURCES})
+target_link_libraries(test_state_integration PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_state_integration PRIVATE ../include)
+gtest_discover_tests(test_state_integration)

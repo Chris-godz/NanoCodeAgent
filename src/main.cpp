@@ -5,10 +5,13 @@
 #include "agent_tools.hpp"
 #include "skill_loader.hpp"
 #include "llm.hpp"
+#include "state.hpp"
+#include "state_store.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <fstream>
 #include <filesystem>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -110,6 +113,28 @@ int main(int argc, char* argv[]) {
     }
     nlohmann::json tools = registry.to_openai_schema(config);
 
+    std::unique_ptr<StateStore> state_store;
+    if (config.session_file.has_value()) {
+        state_store = std::make_unique<JsonFileStateStore>(config.session_file.value());
+    } else {
+        state_store = std::make_unique<InMemoryStateStore>();
+    }
+
+    SessionState session_state;
+    const StateStoreLoadResult load_result = state_store->load();
+    if (load_result.status == StateStoreLoadStatus::Error) {
+        LOG_ERROR("Could not load session state: {}", load_result.error);
+        return EXIT_FAILURE;
+    }
+    if (load_result.status == StateStoreLoadStatus::Loaded) {
+        session_state = load_result.session;
+        LOG_INFO("Loaded session state: {}", session_state.session_id);
+    } else {
+        session_state = make_session_state();
+        LOG_INFO("Created new session state: {}", session_state.session_id);
+    }
+    prepare_session_state(session_state, enabled_skill_names, make_active_rules_snapshot(config));
+
     if (config.dry_run) {
         std::cout << "--- DRY RUN MODE ---\n";
         std::cout << "System Prompt: \n" << sys_prompt << "\n\n";
@@ -175,13 +200,20 @@ int main(int argc, char* argv[]) {
     }
 
     // 5. Run the Agent Loop
+    int exit_code = EXIT_SUCCESS;
     try {
-        agent_run(config, sys_prompt, config.prompt, tools, llm_func);
+        agent_run(config, sys_prompt, config.prompt, tools, llm_func, &session_state);
         LOG_INFO("Agent loop finished successfully.");
     } catch (const std::exception& e) {
         LOG_ERROR("Agent loop terminated with error: {}", e.what());
+        exit_code = EXIT_FAILURE;
+    }
+
+    std::string save_err;
+    if (!state_store->save(session_state, &save_err)) {
+        LOG_ERROR("Could not save session state: {}", save_err);
         return EXIT_FAILURE;
     }
 
-    return EXIT_SUCCESS;
+    return exit_code;
 }
