@@ -279,6 +279,13 @@ void validate_trace_event_or_throw(const TraceEvent& event) {
     }
 }
 
+void validate_session_state_for_json_or_throw(const SessionState& session) {
+    validate_plan_or_throw(session.plan);
+    for (const TraceEvent& event : session.trace) {
+        validate_trace_event_or_throw(event);
+    }
+}
+
 std::string make_session_id() {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
@@ -847,6 +854,8 @@ bool session_state_from_json(const nlohmann::json& json_value, SessionState* out
 }
 
 nlohmann::json session_state_to_json(const SessionState& session) {
+    validate_session_state_for_json_or_throw(session);
+
     nlohmann::json tool_calls = nlohmann::json::array();
     for (const ToolCallRecord& record : session.tool_calls) {
         tool_calls.push_back({

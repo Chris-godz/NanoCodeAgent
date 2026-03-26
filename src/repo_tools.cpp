@@ -236,6 +236,27 @@ std::string normalize_git_commit_error(const std::string& stdout_text,
     return normalize_git_repo_error(combined);
 }
 
+void append_bounded_stderr_segment(std::string* stderr_text,
+                                   const std::string& segment,
+                                   bool* truncated) {
+    if (!stderr_text || segment.empty()) {
+        return;
+    }
+
+    if (!stderr_text->empty() && stderr_text->size() < kMaxCommandStderrBytes) {
+        stderr_text->push_back('\n');
+    }
+
+    const size_t remaining = stderr_text->size() >= kMaxCommandStderrBytes
+                                 ? 0
+                                 : kMaxCommandStderrBytes - stderr_text->size();
+    const size_t keep = std::min(segment.size(), remaining);
+    stderr_text->append(segment, 0, keep);
+    if (keep < segment.size() && truncated) {
+        *truncated = true;
+    }
+}
+
 size_t clamp_git_context_lines(size_t context_lines) {
     return std::min(context_lines, kMaxGitContextLines);
 }
@@ -1928,6 +1949,167 @@ nlohmann::json git_show(const std::string& workspace_abs,
             {"exit_code", -1},
             {"truncated", false},
             {"error", "git is not installed or not executable in this environment."}
+        };
+    }
+
+    if (!patch && stat) {
+        std::string stdout_text;
+        std::string stderr_text;
+        bool truncated = false;
+
+        auto on_line = [&](const std::string& line) -> bool {
+            return append_bounded_output_line(&stdout_text, line, output_limit, &truncated);
+        };
+
+        const std::vector<std::string> show_args = {
+            git_binary, "--no-pager", "show",
+            "-s",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            rev
+        };
+
+        std::string show_stderr;
+        int show_exit_code = -1;
+        bool show_killed_early = false;
+        bool show_stderr_truncated = false;
+        std::string show_err;
+        if (!stream_command_stdout_lines(git_binary, show_args, workspace_abs,
+                                         on_line, &show_stderr, &show_exit_code,
+                                         &show_killed_early, &show_stderr_truncated,
+                                         &show_err, output_limit)) {
+            if (show_err.empty()) {
+                show_err = trim_line_endings(show_stderr);
+            }
+            return {
+                {"ok", false},
+                {"stdout", ""},
+                {"stderr", trim_line_endings(show_stderr)},
+                {"exit_code", show_exit_code},
+                {"truncated", false},
+                {"error", show_err.empty() ? "git show failed." : show_err}
+            };
+        }
+
+        show_stderr = trim_line_endings(std::move(show_stderr));
+        append_bounded_stderr_segment(&stderr_text, show_stderr, &truncated);
+        if (show_stderr_truncated) {
+            truncated = true;
+        }
+        if (show_killed_early && truncated) {
+            show_exit_code = 0;
+        }
+        if (show_exit_code != 0) {
+            const std::string failure = normalize_git_repo_error(show_stderr);
+            return {
+                {"ok", false},
+                {"stdout", ""},
+                {"stderr", show_stderr},
+                {"exit_code", show_exit_code},
+                {"truncated", false},
+                {"error", failure.empty() ? "git show exited with code " + std::to_string(show_exit_code) : failure}
+            };
+        }
+        if (show_killed_early && truncated) {
+            if (!stdout_text.empty() && stdout_text.back() == '\n') {
+                stdout_text.pop_back();
+            }
+            return {
+                {"ok", true},
+                {"stdout", stdout_text},
+                {"stderr", stderr_text},
+                {"exit_code", show_exit_code},
+                {"truncated", true},
+                {"error", ""}
+            };
+        }
+
+        if (!append_bounded_output_line(&stdout_text, "", output_limit, &truncated)) {
+            if (!stdout_text.empty() && stdout_text.back() == '\n') {
+                stdout_text.pop_back();
+            }
+            return {
+                {"ok", true},
+                {"stdout", stdout_text},
+                {"stderr", stderr_text},
+                {"exit_code", 0},
+                {"truncated", true},
+                {"error", ""}
+            };
+        }
+
+        std::vector<std::string> stat_args = {
+            git_binary, "--no-pager", "diff-tree",
+            "--stat",
+            "--root",
+            "-r",
+            "--no-color",
+            "--no-commit-id",
+            "--no-ext-diff",
+            "--no-textconv",
+            rev
+        };
+        if (!pathspecs.empty()) {
+            stat_args.push_back("--");
+            for (const auto& ps : pathspecs) {
+                stat_args.push_back(ps);
+            }
+        }
+
+        std::string stat_stderr;
+        int stat_exit_code = -1;
+        bool stat_killed_early = false;
+        bool stat_stderr_truncated = false;
+        std::string stat_err;
+        if (!stream_command_stdout_lines(git_binary, stat_args, workspace_abs,
+                                         on_line, &stat_stderr, &stat_exit_code,
+                                         &stat_killed_early, &stat_stderr_truncated,
+                                         &stat_err, output_limit)) {
+            if (stat_err.empty()) {
+                stat_err = trim_line_endings(stat_stderr);
+            }
+            return {
+                {"ok", false},
+                {"stdout", ""},
+                {"stderr", trim_line_endings(stat_stderr)},
+                {"exit_code", stat_exit_code},
+                {"truncated", false},
+                {"error", stat_err.empty() ? "git show failed." : stat_err}
+            };
+        }
+
+        stat_stderr = trim_line_endings(std::move(stat_stderr));
+        append_bounded_stderr_segment(&stderr_text, stat_stderr, &truncated);
+        if (stat_stderr_truncated) {
+            truncated = true;
+        }
+        if (stat_killed_early && truncated) {
+            stat_exit_code = 0;
+        }
+        if (stat_exit_code != 0) {
+            const std::string failure = normalize_git_repo_error(stat_stderr);
+            return {
+                {"ok", false},
+                {"stdout", ""},
+                {"stderr", stat_stderr},
+                {"exit_code", stat_exit_code},
+                {"truncated", false},
+                {"error", failure.empty() ? "git show exited with code " + std::to_string(stat_exit_code) : failure}
+            };
+        }
+
+        if (!stdout_text.empty() && stdout_text.back() == '\n') {
+            stdout_text.pop_back();
+        }
+
+        return {
+            {"ok", true},
+            {"stdout", stdout_text},
+            {"stderr", stderr_text},
+            {"exit_code", stat_exit_code},
+            {"truncated", truncated},
+            {"error", ""}
         };
     }
 

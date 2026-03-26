@@ -1281,6 +1281,18 @@ TEST_F(GitShowTest, PatchCanBeDisabled) {
         << "patch=false should suppress unified diff output; got: " << out;
 }
 
+TEST_F(GitShowTest, PatchDisabledStatEnabledPreservesHeaderAndStatWithoutPatch) {
+    init_repo_with_commit();
+    const auto result = git_show(test_workspace, "HEAD", /*patch=*/false, /*stat=*/true, {}, 3);
+    ASSERT_TRUE(result["ok"].get<bool>()) << result["error"];
+    const std::string& out = result["stdout"].get<std::string>();
+    EXPECT_NE(out.find("commit "), std::string::npos) << out;
+    EXPECT_NE(out.find("\n\n hello.txt | 1 +"), std::string::npos) << out;
+    EXPECT_NE(out.find("1 file changed"), std::string::npos) << out;
+    EXPECT_EQ(out.find("diff --git"), std::string::npos) << out;
+    EXPECT_EQ(out.find("\n---"), std::string::npos) << out;
+}
+
 TEST_F(GitShowTest, PathspecFiltersShownFiles) {
     ASSERT_EQ(run_bash("cd '" + test_workspace +
                        "' && git init -b main >/dev/null 2>&1 &&"
@@ -1372,6 +1384,29 @@ TEST_F(GitShowTest, PatchAndStatCanBothBeDisabled) {
     EXPECT_NE(out.find("commit "), std::string::npos) << out;
     EXPECT_EQ(out.find("diff --git"), std::string::npos) << out;
     EXPECT_EQ(out.find("1 file changed"), std::string::npos) << out;
+}
+
+TEST_F(GitShowTest, OtherPatchStatCombinationsRemainUnchanged) {
+    init_repo_with_commit();
+
+    const auto patch_and_stat = git_show(test_workspace, "HEAD", true, true, {}, 3);
+    ASSERT_TRUE(patch_and_stat["ok"].get<bool>()) << patch_and_stat["error"];
+    const std::string patch_and_stat_out = patch_and_stat["stdout"].get<std::string>();
+    EXPECT_NE(patch_and_stat_out.find("diff --git"), std::string::npos) << patch_and_stat_out;
+    EXPECT_NE(patch_and_stat_out.find("1 file changed"), std::string::npos) << patch_and_stat_out;
+
+    const auto patch_only = git_show(test_workspace, "HEAD", true, false, {}, 3);
+    ASSERT_TRUE(patch_only["ok"].get<bool>()) << patch_only["error"];
+    const std::string patch_only_out = patch_only["stdout"].get<std::string>();
+    EXPECT_NE(patch_only_out.find("diff --git"), std::string::npos) << patch_only_out;
+    EXPECT_EQ(patch_only_out.find("1 file changed"), std::string::npos) << patch_only_out;
+
+    const auto header_only = git_show(test_workspace, "HEAD", false, false, {}, 3);
+    ASSERT_TRUE(header_only["ok"].get<bool>()) << header_only["error"];
+    const std::string header_only_out = header_only["stdout"].get<std::string>();
+    EXPECT_NE(header_only_out.find("commit "), std::string::npos) << header_only_out;
+    EXPECT_EQ(header_only_out.find("diff --git"), std::string::npos) << header_only_out;
+    EXPECT_EQ(header_only_out.find("1 file changed"), std::string::npos) << header_only_out;
 }
 
 TEST_F(GitShowTest, ContextLinesZeroIsHonored) {
