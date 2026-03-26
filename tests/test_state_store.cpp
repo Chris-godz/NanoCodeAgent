@@ -3,6 +3,7 @@
 #include "state.hpp"
 #include "state_store.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -257,4 +258,34 @@ TEST_F(StateStoreTest, SaveRejectsInvalidSessionStateBeforeWriting) {
     EXPECT_FALSE(store.save(session, &save_err));
     EXPECT_NE(save_err.find("Invalid session state for save"), std::string::npos);
     EXPECT_FALSE(fs::exists(session_path));
+}
+
+TEST_F(StateStoreTest, StateSaveDoesNotInventTerminalTrace) {
+    JsonFileStateStore store((temp_dir / "terminal-trace.json").string());
+
+    SessionState session = make_session_state();
+    session.trace.push_back(TraceEvent{
+        .kind = "run_started",
+        .message = "agent run started",
+        .created_at = state_now_timestamp(),
+        .payload = nlohmann::json{{"session_id", session.session_id}}
+    });
+    session.trace.push_back(TraceEvent{
+        .kind = "turn_started",
+        .message = "agent turn started",
+        .created_at = state_now_timestamp(),
+        .payload = nlohmann::json{{"session_id", session.session_id}, {"turn_id", "turn-1"}}
+    });
+
+    std::string save_err;
+    ASSERT_TRUE(store.save(session, &save_err)) << save_err;
+
+    const StateStoreLoadResult load_result = store.load();
+    ASSERT_EQ(load_result.status, StateStoreLoadStatus::Loaded) << load_result.error;
+    ASSERT_EQ(load_result.session.trace.size(), 2u);
+    EXPECT_EQ(load_result.session.trace[0].kind, "run_started");
+    EXPECT_EQ(load_result.session.trace[1].kind, "turn_started");
+    EXPECT_TRUE(std::none_of(load_result.session.trace.begin(),
+                             load_result.session.trace.end(),
+                             [](const TraceEvent& event) { return event.kind == "run_finished"; }));
 }

@@ -532,12 +532,14 @@ void agent_run(const AgentConfig& config,
     FanoutTraceSink fanout_trace_sink;
     bool has_trace_sink = false;
     SessionTraceSink session_trace_sink(session_state);
-    if (config.detail_mode && session_state != nullptr) {
-        fanout_trace_sink.add_sink(&session_trace_sink);
-        has_trace_sink = true;
-    }
     if (trace_sink != nullptr) {
         fanout_trace_sink.add_sink(trace_sink);
+        has_trace_sink = true;
+    }
+    if (config.detail_mode && session_state != nullptr) {
+        // Keep the durable trace source authoritative: only mirror into session
+        // after the external sink has accepted the event.
+        fanout_trace_sink.add_sink(&session_trace_sink);
         has_trace_sink = true;
     }
     TraceSink* active_trace_sink = has_trace_sink

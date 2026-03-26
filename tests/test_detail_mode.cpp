@@ -6,6 +6,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -35,23 +36,46 @@ std::string read_file_text(const fs::path& path) {
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
 }
 
-class FailAfterTraceSink : public TraceSink {
+std::vector<TraceEvent> parse_jsonl_trace_file(const fs::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    std::vector<TraceEvent> events;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        events.push_back(nlohmann::json::parse(line).get<TraceEvent>());
+    }
+    return events;
+}
+
+nlohmann::json trace_events_to_json(const std::vector<TraceEvent>& events) {
+    nlohmann::json json_value = nlohmann::json::array();
+    for (const TraceEvent& event : events) {
+        json_value.push_back(nlohmann::json(event));
+    }
+    return json_value;
+}
+
+class FailAfterCommittedTraceSink : public TraceSink {
 public:
-    explicit FailAfterTraceSink(int successful_writes_before_failure)
+    explicit FailAfterCommittedTraceSink(int successful_writes_before_failure)
         : successful_writes_before_failure_(successful_writes_before_failure) {}
 
     TraceWriteResult write(const TraceEvent& event) override {
-        events.push_back(event);
         if (successful_writes_before_failure_-- > 0) {
+            committed_events.push_back(event);
             return {};
         }
+        attempted_events.push_back(event);
         return {
             false,
             "injected trace sink failure",
         };
     }
 
-    std::vector<TraceEvent> events;
+    std::vector<TraceEvent> committed_events;
+    std::vector<TraceEvent> attempted_events;
 
 private:
     int successful_writes_before_failure_ = 0;
@@ -412,7 +436,7 @@ TEST_F(DetailModeTest, RuntimeTraceWriteFailureFailsClosed) {
     config.max_context_bytes = 20000;
 
     SessionState session = make_session_state();
-    FailAfterTraceSink sink(1);
+    FailAfterCommittedTraceSink sink(1);
     LLMStreamFunc mock_llm = [&](const AgentConfig&, const nlohmann::json&, const nlohmann::json&) {
         return nlohmann::json{{"role", "assistant"}, {"content", "done"}};
     };
@@ -432,7 +456,8 @@ TEST_F(DetailModeTest, RuntimeTraceWriteFailureFailsClosed) {
     EXPECT_NE(stderr_text.find("trace sink write failed"), std::string::npos);
     EXPECT_NE(session.scratchpad.find("trace sink write failed"), std::string::npos);
     EXPECT_EQ(find_trace_event(session.trace, "run_finished"), nullptr);
-    EXPECT_EQ(sink.events.size(), 2u);
+    EXPECT_EQ(sink.committed_events.size(), 1u);
+    EXPECT_EQ(sink.attempted_events.size(), 1u);
 }
 
 TEST_F(DetailModeTest, JsonlTraceSinkWritesValidJsonLines) {
@@ -452,4 +477,150 @@ TEST_F(DetailModeTest, JsonlTraceSinkWritesValidJsonLines) {
     const nlohmann::json parsed = nlohmann::json::parse(file_text);
     EXPECT_EQ(parsed.value("kind", ""), "run_started");
     EXPECT_EQ(parsed.at("payload").value("session_id", ""), "session-1");
+}
+
+TEST_F(DetailModeTest, JsonlIsAuthorityWhenEnabled) {
+    AgentConfig config;
+    config.workspace_abs = workspace.string();
+    config.detail_mode = true;
+    config.max_turns = 3;
+    config.max_context_bytes = 20000;
+
+    SessionState session = make_session_state();
+    JsonlTraceSink sink(trace_path.string());
+    std::string err;
+    ASSERT_TRUE(sink.prepare(&err)) << err;
+
+    LLMStreamFunc mock_llm = [&](const AgentConfig&, const nlohmann::json&, const nlohmann::json&) {
+        return nlohmann::json{{"role", "assistant"}, {"content", "done"}};
+    };
+
+    agent_run(config, "system", "user", nlohmann::json::array(), mock_llm, &session, nullptr, &sink);
+
+    const std::vector<TraceEvent> jsonl_events = parse_jsonl_trace_file(trace_path);
+    ASSERT_FALSE(jsonl_events.empty());
+    EXPECT_EQ(trace_events_to_json(jsonl_events), trace_events_to_json(session.trace));
+}
+
+TEST_F(DetailModeTest, JsonlMultipleEventsRemainValidJsonl) {
+    const fs::path target = workspace / "trace_multi.txt";
+    std::ofstream output(target, std::ios::binary);
+    output << "hello";
+    output.close();
+
+    AgentConfig config;
+    config.workspace_abs = workspace.string();
+    config.detail_mode = true;
+    config.allow_mutating_tools = true;
+    config.max_turns = 3;
+    config.max_context_bytes = 20000;
+
+    SessionState session = make_session_state();
+    JsonlTraceSink sink(trace_path.string());
+    std::string err;
+    ASSERT_TRUE(sink.prepare(&err)) << err;
+
+    int turn = 0;
+    LLMStreamFunc mock_llm = [&](const AgentConfig&, const nlohmann::json&, const nlohmann::json&) {
+        ++turn;
+        if (turn == 1) {
+            return nlohmann::json{
+                {"role", "assistant"},
+                {"tool_calls", {{
+                    {"id", "read_call"},
+                    {"function", {
+                        {"name", "read_file_safe"},
+                        {"arguments", "{\"path\":\"trace_multi.txt\"}"}
+                    }}
+                }}}
+            };
+        }
+        return nlohmann::json{{"role", "assistant"}, {"content", "done"}};
+    };
+
+    agent_run(config, "system", "user", nlohmann::json::array(), mock_llm, &session, nullptr, &sink);
+
+    const std::string file_text = read_file_text(trace_path);
+    ASSERT_FALSE(file_text.empty());
+
+    std::istringstream input(file_text);
+    std::vector<TraceEvent> jsonl_events;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        jsonl_events.push_back(nlohmann::json::parse(line).get<TraceEvent>());
+    }
+
+    ASSERT_GE(jsonl_events.size(), 6u);
+    EXPECT_EQ(jsonl_events.front().kind, "run_started");
+    EXPECT_EQ(jsonl_events[1].kind, "turn_started");
+    EXPECT_EQ(jsonl_events[2].kind, "llm_response_received");
+    EXPECT_EQ(jsonl_events[3].kind, "tool_call_started");
+    EXPECT_EQ(jsonl_events[4].kind, "tool_call_finished");
+    EXPECT_EQ(jsonl_events.back().kind, "run_finished");
+    EXPECT_EQ(trace_events_to_json(jsonl_events), trace_events_to_json(session.trace));
+}
+
+TEST_F(DetailModeTest, TraceJsonlFailureDoesNotLeaveSessionAheadOfJsonl) {
+    AgentConfig config;
+    config.workspace_abs = workspace.string();
+    config.detail_mode = true;
+    config.max_turns = 3;
+    config.max_context_bytes = 20000;
+
+    SessionState session = make_session_state();
+    FailAfterCommittedTraceSink durable_sink(1);
+    LLMStreamFunc mock_llm = [&](const AgentConfig&, const nlohmann::json&, const nlohmann::json&) {
+        return nlohmann::json{{"role", "assistant"}, {"content", "done"}};
+    };
+
+    EXPECT_THROW(agent_run(config,
+                           "system",
+                           "user",
+                           nlohmann::json::array(),
+                           mock_llm,
+                           &session,
+                           nullptr,
+                           &durable_sink),
+                 std::runtime_error);
+
+    ASSERT_EQ(durable_sink.committed_events.size(), 1u);
+    EXPECT_EQ(trace_events_to_json(session.trace), trace_events_to_json(durable_sink.committed_events));
+    EXPECT_EQ(durable_sink.attempted_events.size(), 1u);
+    EXPECT_EQ(durable_sink.attempted_events[0].kind, "turn_started");
+}
+
+TEST_F(DetailModeTest, RunFinishedIsAbsentEverywhereOnTraceFailure) {
+    AgentConfig config;
+    config.workspace_abs = workspace.string();
+    config.detail_mode = true;
+    config.max_turns = 3;
+    config.max_context_bytes = 20000;
+
+    SessionState session = make_session_state();
+    FailAfterCommittedTraceSink durable_sink(1);
+    LLMStreamFunc mock_llm = [&](const AgentConfig&, const nlohmann::json&, const nlohmann::json&) {
+        return nlohmann::json{{"role", "assistant"}, {"content", "done"}};
+    };
+
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(agent_run(config,
+                           "system",
+                           "user",
+                           nlohmann::json::array(),
+                           mock_llm,
+                           &session,
+                           nullptr,
+                           &durable_sink),
+                 std::runtime_error);
+    const std::string stderr_text = testing::internal::GetCapturedStderr();
+
+    EXPECT_NE(stderr_text.find("trace sink write failed"), std::string::npos);
+    EXPECT_NE(session.scratchpad.find("trace sink write failed"), std::string::npos);
+    EXPECT_EQ(find_trace_event(session.trace, "run_finished"), nullptr);
+    EXPECT_EQ(find_trace_event(durable_sink.committed_events, "run_finished"), nullptr);
+    ASSERT_EQ(durable_sink.attempted_events.size(), 1u);
+    EXPECT_EQ(durable_sink.attempted_events[0].kind, "turn_started");
 }

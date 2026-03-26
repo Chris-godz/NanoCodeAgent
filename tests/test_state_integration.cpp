@@ -1,11 +1,50 @@
 #include <gtest/gtest.h>
 
 #include "agent_loop.hpp"
+#include "state_store.hpp"
+#include "trace.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 
 namespace fs = std::filesystem;
+
+namespace {
+
+class FailAfterCommittedTraceSink : public TraceSink {
+public:
+    explicit FailAfterCommittedTraceSink(int successful_writes_before_failure)
+        : successful_writes_before_failure_(successful_writes_before_failure) {}
+
+    TraceWriteResult write(const TraceEvent& event) override {
+        if (successful_writes_before_failure_-- > 0) {
+            committed_events.push_back(event);
+            return {};
+        }
+        attempted_events.push_back(event);
+        return {
+            false,
+            "injected trace sink failure",
+        };
+    }
+
+    std::vector<TraceEvent> committed_events;
+    std::vector<TraceEvent> attempted_events;
+
+private:
+    int successful_writes_before_failure_ = 0;
+};
+
+nlohmann::json trace_events_to_json(const std::vector<TraceEvent>& events) {
+    nlohmann::json json_value = nlohmann::json::array();
+    for (const TraceEvent& event : events) {
+        json_value.push_back(nlohmann::json(event));
+    }
+    return json_value;
+}
+
+}  // namespace
 
 class StateIntegrationTest : public ::testing::Test {
 protected:
@@ -144,4 +183,43 @@ TEST_F(StateIntegrationTest, PrepareSessionStateResetsStalePlanAndBumpsGeneratio
     EXPECT_TRUE(session.plan.steps.empty());
     EXPECT_TRUE(session.plan.metadata.is_object());
     EXPECT_TRUE(session.plan.metadata.empty());
+}
+
+TEST_F(StateIntegrationTest, TraceFailureStillSavesConsistentSession) {
+    AgentConfig config;
+    config.workspace_abs = workspace.string();
+    config.detail_mode = true;
+    config.max_turns = 3;
+    config.max_context_bytes = 20000;
+
+    SessionState session = make_session_state();
+    prepare_session_state(session, {"runtime-skill"}, make_active_rules_snapshot(config));
+
+    FailAfterCommittedTraceSink durable_sink(1);
+    LLMStreamFunc mock_llm = [&](const AgentConfig&, const nlohmann::json&, const nlohmann::json&) {
+        return nlohmann::json{{"role", "assistant"}, {"content", "done"}};
+    };
+
+    EXPECT_THROW(agent_run(config,
+                           "system",
+                           "user",
+                           nlohmann::json::array(),
+                           mock_llm,
+                           &session,
+                           nullptr,
+                           &durable_sink),
+                 std::runtime_error);
+
+    const fs::path session_path = workspace / "session.json";
+    JsonFileStateStore store(session_path.string());
+    std::string save_err;
+    ASSERT_TRUE(store.save(session, &save_err)) << save_err;
+
+    const StateStoreLoadResult load_result = store.load();
+    ASSERT_EQ(load_result.status, StateStoreLoadStatus::Loaded) << load_result.error;
+    EXPECT_EQ(trace_events_to_json(load_result.session.trace),
+              trace_events_to_json(durable_sink.committed_events));
+    EXPECT_TRUE(std::none_of(load_result.session.trace.begin(),
+                             load_result.session.trace.end(),
+                             [](const TraceEvent& event) { return event.kind == "run_finished"; }));
 }
