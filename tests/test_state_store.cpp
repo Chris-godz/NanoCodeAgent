@@ -289,3 +289,107 @@ TEST_F(StateStoreTest, StateSaveDoesNotInventTerminalTrace) {
                              load_result.session.trace.end(),
                              [](const TraceEvent& event) { return event.kind == "run_finished"; }));
 }
+
+TEST_F(StateStoreTest, PlannerEvidenceRoundTripPreservesRepairAttemptsAndTracePayloads) {
+    JsonFileStateStore store((temp_dir / "planner-evidence.json").string());
+
+    SessionState session = make_session_state();
+    nlohmann::json encoded = session_state_to_json(session);
+    encoded["needs_plan"] = true;
+    encoded["plan_state"] = "PLAN_READY";
+    encoded["plan_repair_attempts"] = 1;
+    encoded["plan_normalization_applied"] = false;
+    encoded["plan_validation_errors"] = nlohmann::json::array();
+    encoded["plan_raw_response"] = nlohmann::json{
+        {"role", "assistant"},
+        {"content", "{\"plan\":{\"summary\":\"raw planner reply\"}}"}
+    };
+    encoded["plan_validated_artifact"] = nlohmann::json{
+        {"plan", {
+            {"summary", "validated planner artifact"},
+            {"steps", nlohmann::json::array({
+                nlohmann::json{
+                    {"id", "step-1"},
+                    {"title", "inspect runtime state"},
+                    {"status", "pending"},
+                    {"detail", "validated"}
+                }
+            })},
+            {"metadata", nlohmann::json::object()}
+        }}
+    };
+    encoded["trace"] = nlohmann::json::array({
+        nlohmann::json{
+            {"kind", "planner_response_received"},
+            {"message", "planner response received"},
+            {"created_at", state_now_timestamp()},
+            {"payload", {
+                {"planner_raw_response", encoded["plan_raw_response"]},
+                {"plan_state", "AWAITING_REPAIR"},
+                {"plan_repair_attempts", 1},
+                {"needs_plan_decision", "heuristic_requires_plan_contract"},
+                {"planner_repair_effective_mode", "structured"},
+                {"planner_repair_mode_reason", "provider_profile_default_deepseek_structured"}
+            }}
+        },
+        nlohmann::json{
+            {"kind", "planner_repair_succeeded"},
+            {"message", "planner repair succeeded"},
+            {"created_at", state_now_timestamp()},
+            {"payload", {
+                {"planner_raw_response", encoded["plan_raw_response"]},
+                {"plan_validated_artifact", encoded["plan_validated_artifact"]},
+                {"normalization_applied", false},
+                {"plan_state", "PLAN_READY"},
+                {"plan_repair_attempts", 1},
+                {"needs_plan_decision", "heuristic_requires_plan_contract"},
+                {"planner_repair_effective_mode", "structured"},
+                {"planner_repair_mode_reason", "provider_profile_default_deepseek_structured"}
+            }}
+        },
+        nlohmann::json{
+            {"kind", "run_finished"},
+            {"message", "agent run completed"},
+            {"created_at", state_now_timestamp()},
+            {"payload", {
+                {"outcome", "completed"},
+                {"final_plan_state", "PLAN_READY"},
+                {"needs_plan_decision", "heuristic_requires_plan_contract"},
+                {"planner_repair_effective_mode", "structured"},
+                {"planner_repair_mode_reason", "provider_profile_default_deepseek_structured"}
+            }}
+        }
+    });
+
+    SessionState parsed;
+    std::string parse_err;
+    ASSERT_TRUE(session_state_from_json(encoded, &parsed, &parse_err)) << parse_err;
+
+    std::string save_err;
+    ASSERT_TRUE(store.save(parsed, &save_err)) << save_err;
+
+    const StateStoreLoadResult load_result = store.load();
+    ASSERT_EQ(load_result.status, StateStoreLoadStatus::Loaded) << load_result.error;
+
+    const nlohmann::json reloaded = session_state_to_json(load_result.session);
+    EXPECT_EQ(reloaded.value("plan_repair_attempts", -1), 1);
+    EXPECT_EQ(reloaded.value("plan_state", ""), "PLAN_READY");
+    EXPECT_FALSE(reloaded.value("plan_normalization_applied", true));
+    EXPECT_EQ(reloaded.at("plan_raw_response"), encoded["plan_raw_response"]);
+    EXPECT_EQ(reloaded.at("plan_validated_artifact"), encoded["plan_validated_artifact"]);
+    ASSERT_EQ(reloaded.at("trace").size(), 3u);
+    EXPECT_EQ(reloaded.at("trace")[0].at("kind"), "planner_response_received");
+    EXPECT_EQ(reloaded.at("trace")[0].at("payload").value("plan_repair_attempts", -1), 1);
+    EXPECT_EQ(reloaded.at("trace")[0].at("payload").value("planner_repair_effective_mode", ""),
+              "structured");
+    EXPECT_EQ(reloaded.at("trace")[0].at("payload").value("planner_repair_mode_reason", ""),
+              "provider_profile_default_deepseek_structured");
+    EXPECT_EQ(reloaded.at("trace")[1].at("kind"), "planner_repair_succeeded");
+    ASSERT_TRUE(reloaded.at("trace")[1].at("payload").contains("plan_validated_artifact"));
+    EXPECT_EQ(reloaded.at("trace")[1].at("payload").value("needs_plan_decision", ""),
+              "heuristic_requires_plan_contract");
+    EXPECT_EQ(reloaded.at("trace")[2].at("kind"), "run_finished");
+    EXPECT_EQ(reloaded.at("trace")[2].at("payload").value("final_plan_state", ""), "PLAN_READY");
+    EXPECT_EQ(reloaded.at("trace")[2].at("payload").value("planner_repair_effective_mode", ""),
+              "structured");
+}

@@ -1,0 +1,56 @@
+[
+  {
+    "role": "assistant",
+    "content": "planner contract needs repair",
+    "plan": {
+      "summary": "Repair the planner contract before execution",
+      "steps": {
+        "alpha": {
+          "id": "step-a",
+          "title": "inspect runtime state",
+          "detail": "invalid key shape forces repair"
+        },
+        "beta": {
+          "id": "step-b",
+          "title": "write focused contract tests",
+          "detail": "invalid key shape forces repair"
+        }
+      },
+      "metadata": {
+        "source": "planner-contract-repair-fixture",
+        "style": "repair-only"
+      }
+    }
+  },
+  {
+    "role": "assistant",
+    "content": "planner contract repaired",
+    "plan": {
+      "summary": "Repair succeeded after one retry",
+      "steps": [
+        {
+          "id": "step-1",
+          "title": "inspect runtime state",
+          "detail": "validated array step"
+        },
+        {
+          "id": "step-2",
+          "title": "write focused contract tests",
+          "detail": "validated array step"
+        }
+      ],
+      "metadata": {
+        "source": "planner-contract-repair-fixture",
+        "style": "repair-only"
+      }
+    }
+  },
+  {
+    "role": "assistant",
+    "content": "step executed"
+  },
+  {
+    "role": "assistant",
+    "content": "step executed"
+  }
+]

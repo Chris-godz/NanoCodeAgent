@@ -1,12 +1,14 @@
 #include "agent_loop.hpp"
 #include "agent_utils.hpp"
 #include "agent_tools.hpp"
+#include "llm.hpp"
 #include "tool_call.hpp"
 #include "logger.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -19,6 +21,11 @@ namespace {
 constexpr std::size_t kFailedTestsJoinLimit = 3;
 constexpr int kMaxFailureRetries = 1;
 constexpr std::size_t kMaxFingerprintArgumentsBytes = 128;
+constexpr std::string_view kPlanStateIdle = "IDLE";
+constexpr std::string_view kPlanStateAwaitingPlan = "AWAITING_PLAN";
+constexpr std::string_view kPlanStateAwaitingRepair = "AWAITING_REPAIR";
+constexpr std::string_view kPlanStatePlanReady = "PLAN_READY";
+constexpr std::string_view kPlanStatePlanInvalid = "PLAN_INVALID";
 
 enum class ToolFailureClass {
     None,
@@ -433,6 +440,618 @@ std::string make_skipped_tool_output() {
     }.dump();
 }
 
+bool session_has_active_plan(const SessionState* session_state) {
+    if (session_state == nullptr) {
+        return false;
+    }
+    const Plan& plan = session_state->plan;
+    return !plan.steps.empty() &&
+           plan.current_step_index >= 0 &&
+           plan.current_step_index < static_cast<int>(plan.steps.size()) &&
+           plan.outcome == "in_progress";
+}
+
+bool session_plan_ready_for_execution(const SessionState* session_state) {
+    return session_has_active_plan(session_state) &&
+           session_state->plan_state == kPlanStatePlanReady;
+}
+
+bool session_waiting_on_plan_contract(const SessionState* session_state) {
+    if (session_state == nullptr || !session_state->needs_plan) {
+        return false;
+    }
+    return session_state->plan_state == kPlanStateAwaitingPlan ||
+           session_state->plan_state == kPlanStateAwaitingRepair;
+}
+
+void clear_planner_contract_fields(SessionState* session_state) {
+    if (session_state == nullptr) {
+        return;
+    }
+    session_state->plan_raw_response = nlohmann::json::object();
+    session_state->plan_validated_artifact = nlohmann::json::object();
+    session_state->plan_validation_errors.clear();
+    session_state->plan_normalization_applied = false;
+    session_state->plan_repair_attempts = 0;
+}
+
+void set_plan_state(SessionState* session_state, std::string_view plan_state) {
+    if (session_state == nullptr) {
+        return;
+    }
+    session_state->plan_state = std::string(plan_state);
+}
+
+void begin_planner_contract(SessionState* session_state) {
+    if (session_state == nullptr) {
+        return;
+    }
+    clear_planner_contract_fields(session_state);
+    set_plan_state(session_state, kPlanStateAwaitingPlan);
+}
+
+std::string lower_copy(const std::string& text) {
+    std::string lowered = text;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return lowered;
+}
+
+std::string normalize_planner_repair_prompt_version(std::string value) {
+    const std::string lowered = lower_copy(value);
+    if (lowered == "v1" || lowered == "v2" || lowered == "v3" ||
+        lowered == "auto" || lowered.empty() ||
+        lowered == "provider_profile" || lowered == "provider-profile") {
+        return lowered;
+    }
+    return "auto";
+}
+
+struct PlannerRepairPromptVersionSelection {
+    std::string version;
+    std::string reason;
+};
+
+PlannerRepairPromptVersionSelection resolve_planner_repair_prompt_version(const AgentConfig& config) {
+    const std::string normalized = normalize_planner_repair_prompt_version(
+        config.planner_repair_prompt_version);
+    const bool deepseek_profile = llm_provider_profile_is_deepseek(config);
+
+    if (normalized == "v1" || normalized == "v2" || normalized == "v3") {
+        return PlannerRepairPromptVersionSelection{
+            .version = normalized,
+            .reason = "explicit_prompt_version"
+        };
+    }
+
+    if (deepseek_profile) {
+        return PlannerRepairPromptVersionSelection{
+            .version = "v2",
+            .reason = "provider_profile_default_deepseek_v2"
+        };
+    }
+
+    return PlannerRepairPromptVersionSelection{
+        .version = "v3",
+        .reason = "provider_profile_default_v3_non_deepseek"
+    };
+}
+
+void append_plan_repair_validation_errors(std::string* prompt,
+                                          const std::vector<std::string>& errors) {
+    if (prompt == nullptr) {
+        return;
+    }
+
+    *prompt += "Validation errors:\n";
+    if (errors.empty()) {
+        *prompt += "- previous planner response violated the runtime contract\n";
+        return;
+    }
+    for (const std::string& error : errors) {
+        *prompt += "- " + error + "\n";
+    }
+}
+
+std::string build_plan_repair_prompt_v1(const std::vector<std::string>& errors) {
+    std::string prompt =
+        "Planner contract repair required.\n"
+        "Return ONLY one JSON object.\n"
+        "No markdown.\n"
+        "No explanation.\n"
+        "No tool calls.\n"
+        "The top-level object must contain key \"plan\".\n"
+        "plan.steps must be a non-empty array.\n"
+        "Each item in plan.steps must be an object with string fields id, title, and detail.\n"
+        "plan.summary may be a string.\n"
+        "plan.metadata may be an object.\n";
+    append_plan_repair_validation_errors(&prompt, errors);
+    return prompt;
+}
+
+std::string build_plan_repair_prompt_v2(const std::vector<std::string>& errors) {
+    std::string prompt =
+        "Planner contract repair required.\n"
+        "Return ONLY one JSON object.\n"
+        "No markdown.\n"
+        "No explanation.\n"
+        "No tool calls.\n"
+        "The top-level object must contain key \"plan\".\n"
+        "plan.steps must be a non-empty array.\n"
+        "Each item in plan.steps must be an object with string fields id, title, and detail.\n"
+        "plan.summary may be a string.\n"
+        "plan.metadata may be an object.\n"
+        "Example valid shape:\n"
+        "{\"plan\":{\"summary\":\"short summary\",\"steps\":[{\"id\":\"step-1\",\"title\":\"first task\",\"detail\":\"do the first task\"}],\"metadata\":{}}}\n";
+    append_plan_repair_validation_errors(&prompt, errors);
+    return prompt;
+}
+
+std::string build_plan_repair_prompt_v3(const std::vector<std::string>& errors) {
+    std::string prompt =
+        "Planner contract repair required.\n"
+        "Return ONLY one JSON object.\n"
+        "No markdown.\n"
+        "No explanation.\n"
+        "No tool calls.\n"
+        "Repair the previous invalid planner response using the errors below.\n"
+        "The top-level object must contain key \"plan\".\n"
+        "plan.steps must be a non-empty array, never an object.\n"
+        "Each item in plan.steps must be an object with string fields id, title, and detail.\n"
+        "plan.summary may be a string.\n"
+        "plan.metadata may be an object.\n";
+    append_plan_repair_validation_errors(&prompt, errors);
+    prompt +=
+        "Minimal legal template:\n"
+        "{\"plan\":{\"summary\":\"<optional summary>\",\"steps\":[{\"id\":\"step-1\",\"title\":\"<title>\",\"detail\":\"<detail>\"}]}}\n";
+    return prompt;
+}
+
+bool prompt_needs_plan(const std::string& prompt) {
+    if (prompt.size() < 80) {
+        return false;
+    }
+
+    const std::string lowered = lower_copy(prompt);
+    int matched_keywords = 0;
+    for (const std::string& keyword : {
+             std::string("step"),
+             std::string("then"),
+             std::string("finally"),
+             std::string("refactor"),
+             std::string("plan"),
+             std::string("multi"),
+         }) {
+        if (lowered.find(keyword) != std::string::npos) {
+            ++matched_keywords;
+        }
+    }
+
+    return matched_keywords >= 2;
+}
+
+bool try_parse_embedded_content_object(const nlohmann::json& response_message, nlohmann::json* out) {
+    if (out == nullptr ||
+        !response_message.contains("content") ||
+        !response_message.at("content").is_string()) {
+        return false;
+    }
+
+    const std::string& content = response_message.at("content").get_ref<const std::string&>();
+    if (content.empty()) {
+        return false;
+    }
+
+    try {
+        nlohmann::json parsed = nlohmann::json::parse(content);
+        if (!parsed.is_object()) {
+            return false;
+        }
+        *out = std::move(parsed);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool parse_step_key(const std::string& key, int* order) {
+    if (!key.starts_with("step-")) {
+        return false;
+    }
+    const std::string numeric_part = key.substr(5);
+    if (numeric_part.empty()) {
+        return false;
+    }
+    for (unsigned char ch : numeric_part) {
+        if (!std::isdigit(ch)) {
+            return false;
+        }
+    }
+    int parsed_order = 0;
+    try {
+        parsed_order = std::stoi(numeric_part);
+    } catch (...) {
+        return false;
+    }
+    if (parsed_order <= 0) {
+        return false;
+    }
+    if (order != nullptr) {
+        *order = parsed_order;
+    }
+    return true;
+}
+
+void add_plan_validation_error(std::vector<std::string>* errors, std::string message) {
+    if (errors != nullptr) {
+        errors->push_back(std::move(message));
+    }
+}
+
+bool try_extract_plan_contract_candidate(const nlohmann::json& response_message,
+                                         nlohmann::json* out,
+                                         std::vector<std::string>* errors = nullptr) {
+    if (out == nullptr) {
+        add_plan_validation_error(errors, "Planner contract extraction requires a non-null output object.");
+        return false;
+    }
+
+    if (response_message.contains("plan")) {
+        if (!response_message.at("plan").is_object()) {
+            add_plan_validation_error(errors, "Planner response field 'plan' must be an object.");
+            return false;
+        }
+        *out = nlohmann::json{{"plan", response_message.at("plan")}};
+        return true;
+    }
+
+    nlohmann::json embedded = nlohmann::json::object();
+    if (!try_parse_embedded_content_object(response_message, &embedded)) {
+        add_plan_validation_error(errors,
+                                  "Planner response must provide a top-level object field 'plan' or JSON object content containing one.");
+        return false;
+    }
+    if (!embedded.contains("plan")) {
+        add_plan_validation_error(errors,
+                                  "Planner response content must include a top-level object field 'plan'.");
+        return false;
+    }
+    if (!embedded.at("plan").is_object()) {
+        add_plan_validation_error(errors, "Planner response field 'plan' must be an object.");
+        return false;
+    }
+
+    *out = nlohmann::json{{"plan", embedded.at("plan")}};
+    return true;
+}
+
+bool response_contains_plan_contract(const nlohmann::json& response_message) {
+    nlohmann::json unused = nlohmann::json::object();
+    return try_extract_plan_contract_candidate(response_message, &unused, nullptr);
+}
+
+bool validate_plan_contract_candidate(const nlohmann::json& response_message,
+                                      const nlohmann::json& contract,
+                                      std::vector<std::string>* errors) {
+    if (response_message.contains("tool_calls") &&
+        response_message.at("tool_calls").is_array() &&
+        !response_message.at("tool_calls").empty()) {
+        add_plan_validation_error(errors, "Planner response must not include tool calls while awaiting a plan contract.");
+    }
+
+    if (!contract.is_object() || !contract.contains("plan") || !contract.at("plan").is_object()) {
+        add_plan_validation_error(errors, "Planner contract must be a JSON object containing an object field 'plan'.");
+        return errors == nullptr || errors->empty();
+    }
+
+    const auto& plan_json = contract.at("plan");
+    if (plan_json.contains("summary") && !plan_json.at("summary").is_string()) {
+        add_plan_validation_error(errors, "Planner response field 'plan.summary' must be a string when present.");
+    }
+    if (plan_json.contains("metadata") && !plan_json.at("metadata").is_object()) {
+        add_plan_validation_error(errors, "Planner response field 'plan.metadata' must be an object when present.");
+    }
+    if (!plan_json.contains("steps")) {
+        add_plan_validation_error(errors, "Planner response must include field 'plan.steps'.");
+        return errors == nullptr || errors->empty();
+    }
+
+    const auto& steps = plan_json.at("steps");
+    if (steps.is_array()) {
+        if (steps.empty()) {
+            add_plan_validation_error(errors, "Planner response field 'plan.steps' must be a non-empty array.");
+        }
+        return errors == nullptr || errors->empty();
+    }
+    if (steps.is_object()) {
+        add_plan_validation_error(errors,
+                                  "Planner response field 'plan.steps' must be a non-empty array; keyed objects require repair.");
+        return errors == nullptr || errors->empty();
+    }
+    add_plan_validation_error(errors,
+                              "Planner response field 'plan.steps' must be a non-empty array.");
+    return errors == nullptr || errors->empty();
+}
+
+bool normalize_plan_contract(nlohmann::json* contract, bool* normalization_applied) {
+    if (normalization_applied != nullptr) {
+        *normalization_applied = false;
+    }
+    if (contract == nullptr ||
+        !contract->is_object() ||
+        !contract->contains("plan") ||
+        !contract->at("plan").is_object() ||
+        !contract->at("plan").contains("steps") ||
+        !contract->at("plan").at("steps").is_object()) {
+        return true;
+    }
+
+    std::vector<std::pair<int, nlohmann::json>> ordered_steps;
+    const auto& step_object = contract->at("plan").at("steps");
+    ordered_steps.reserve(step_object.size());
+    for (auto it = step_object.begin(); it != step_object.end(); ++it) {
+        int order = 0;
+        if (!parse_step_key(it.key(), &order)) {
+            return false;
+        }
+        ordered_steps.push_back({order, it.value()});
+    }
+
+    std::sort(ordered_steps.begin(), ordered_steps.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.first < rhs.first;
+    });
+
+    nlohmann::json normalized_steps = nlohmann::json::array();
+    for (const auto& [order, value] : ordered_steps) {
+        (void)order;
+        normalized_steps.push_back(value);
+    }
+    (*contract)["plan"]["steps"] = std::move(normalized_steps);
+    if (normalization_applied != nullptr) {
+        *normalization_applied = true;
+    }
+    return true;
+}
+
+bool validate_normalized_plan_contract(const nlohmann::json& contract,
+                                       std::vector<std::string>* errors) {
+    if (!contract.is_object() || !contract.contains("plan") || !contract.at("plan").is_object()) {
+        add_plan_validation_error(errors, "Planner contract must be a JSON object containing an object field 'plan'.");
+        return errors == nullptr || errors->empty();
+    }
+
+    const auto& plan_json = contract.at("plan");
+    if (plan_json.contains("summary") && !plan_json.at("summary").is_string()) {
+        add_plan_validation_error(errors, "Planner response field 'plan.summary' must be a string when present.");
+    }
+    if (plan_json.contains("metadata") && !plan_json.at("metadata").is_object()) {
+        add_plan_validation_error(errors, "Planner response field 'plan.metadata' must be an object when present.");
+    }
+    if (!plan_json.contains("steps") || !plan_json.at("steps").is_array() || plan_json.at("steps").empty()) {
+        add_plan_validation_error(errors, "Planner response field 'plan.steps' must be a non-empty array.");
+        return errors == nullptr || errors->empty();
+    }
+
+    const auto& steps = plan_json.at("steps");
+    for (std::size_t index = 0; index < steps.size(); ++index) {
+        const auto& step_json = steps.at(index);
+        if (!step_json.is_object()) {
+            add_plan_validation_error(errors,
+                                      "Planner response field 'plan.steps[" + std::to_string(index) + "]' must be an object.");
+            continue;
+        }
+        const std::string index_text = std::to_string(index);
+        for (const char* required_field : {"id", "title", "detail"}) {
+            if (!step_json.contains(required_field) || !step_json.at(required_field).is_string()) {
+                add_plan_validation_error(
+                    errors,
+                    "Planner response field 'plan.steps[" + index_text + "]." + required_field +
+                        "' must be a string.");
+            }
+        }
+        try {
+            (void)step_json.get<PlanStep>();
+        } catch (const std::exception& e) {
+            add_plan_validation_error(errors,
+                                      "Planner response field 'plan.steps[" + std::to_string(index) +
+                                          "]' is invalid: " + e.what());
+        }
+    }
+
+    return errors == nullptr || errors->empty();
+}
+
+std::string build_plan_repair_prompt_for_config(const AgentConfig& config,
+                                                const std::vector<std::string>& errors) {
+    const PlannerRepairPromptVersionSelection prompt_selection =
+        resolve_planner_repair_prompt_version(config);
+    const std::string& version = prompt_selection.version;
+    if (version == "v1") {
+        return build_plan_repair_prompt_v1(errors);
+    }
+    if (version == "v2") {
+        return build_plan_repair_prompt_v2(errors);
+    }
+    return build_plan_repair_prompt_v3(errors);
+}
+
+void apply_usage_to_trace_payload(nlohmann::json* payload, const nlohmann::json& usage) {
+    if (payload == nullptr || !payload->is_object() || !usage.is_object()) {
+        return;
+    }
+
+    for (const char* key : {"prompt_tokens", "completion_tokens", "total_tokens"}) {
+        if (usage.contains(key) && usage.at(key).is_number_integer()) {
+            (*payload)[key] = usage.at(key);
+        }
+    }
+}
+
+void append_planner_state_to_trace_payload(nlohmann::json* payload,
+                                           const SessionState* session_state,
+                                           std::string_view needs_plan_decision,
+                                           const PlannerRepairModeSelection& repair_mode_selection) {
+    if (payload == nullptr || !payload->is_object() || session_state == nullptr) {
+        return;
+    }
+    (*payload)["plan_state"] = session_state->plan_state;
+    (*payload)["plan_repair_attempts"] = session_state->plan_repair_attempts;
+    (*payload)["needs_plan_decision"] = std::string(needs_plan_decision);
+    (*payload)["planner_repair_effective_mode"] = repair_mode_selection.effective_mode;
+    (*payload)["planner_repair_mode_reason"] = repair_mode_selection.reason;
+}
+
+void persist_plan_contract_failure(SessionState* session_state,
+                                   const nlohmann::json& raw_response,
+                                   const std::vector<std::string>& validation_errors,
+                                   bool normalization_applied,
+                                   std::string_view plan_state) {
+    if (session_state == nullptr) {
+        return;
+    }
+    session_state->plan_raw_response = raw_response.is_object() ? raw_response : nlohmann::json::object();
+    session_state->plan_validated_artifact = nlohmann::json::object();
+    session_state->plan_validation_errors = validation_errors;
+    session_state->plan_normalization_applied = normalization_applied;
+    set_plan_state(session_state, plan_state);
+    touch_session(*session_state);
+}
+
+void persist_plan_contract_success(SessionState* session_state,
+                                   const nlohmann::json& raw_response,
+                                   const nlohmann::json& validated_artifact,
+                                   bool normalization_applied) {
+    if (session_state == nullptr) {
+        return;
+    }
+    session_state->plan_raw_response = raw_response.is_object() ? raw_response : nlohmann::json::object();
+    session_state->plan_validated_artifact =
+        validated_artifact.is_object() ? validated_artifact : nlohmann::json::object();
+    session_state->plan_validation_errors.clear();
+    session_state->plan_normalization_applied = normalization_applied;
+    set_plan_state(session_state, kPlanStatePlanReady);
+    touch_session(*session_state);
+}
+
+bool build_plan_from_validated_artifact(const nlohmann::json& validated_artifact,
+                                        int generation,
+                                        Plan* out,
+                                        std::string* err) {
+    if (out == nullptr) {
+        if (err != nullptr) {
+            *err = "Planner response requires a non-null Plan output.";
+        }
+        return false;
+    }
+    if (!validated_artifact.is_object() ||
+        !validated_artifact.contains("plan") ||
+        !validated_artifact.at("plan").is_object()) {
+        if (err != nullptr) {
+            *err = "Planner response is missing a top-level object field 'plan'.";
+        }
+        return false;
+    }
+
+    const auto& plan_json = validated_artifact.at("plan");
+    if (!plan_json.contains("steps") ||
+        !plan_json.at("steps").is_array() ||
+        plan_json.at("steps").empty()) {
+        if (err != nullptr) {
+            *err = "Planner response must include a non-empty array field 'plan.steps'.";
+        }
+        return false;
+    }
+
+    Plan planned;
+    planned.generation = generation;
+    planned.summary = plan_json.value("summary", "");
+    planned.metadata = plan_json.value("metadata", nlohmann::json::object());
+    if (!planned.metadata.is_object()) {
+        if (err != nullptr) {
+            *err = "Planner response field 'plan.metadata' must be an object.";
+        }
+        return false;
+    }
+
+    planned.steps.reserve(plan_json.at("steps").size());
+    for (std::size_t index = 0; index < plan_json.at("steps").size(); ++index) {
+        PlanStep step;
+        try {
+            step = plan_json.at("steps").at(index).get<PlanStep>();
+        } catch (const std::exception& e) {
+            if (err != nullptr) {
+                *err = std::string("Planner response field 'plan.steps' is invalid: ") + e.what();
+            }
+            return false;
+        }
+        step.status = "pending";
+        planned.steps.push_back(std::move(step));
+    }
+
+    planned.current_step_index = 0;
+    planned.outcome = "in_progress";
+    planned.steps.front().status = "in_progress";
+    *out = std::move(planned);
+    return true;
+}
+
+void update_plan_scratchpad(SessionState& session) {
+    if (session.plan.outcome == "completed") {
+        set_session_scratchpad(session, "plan completed");
+        return;
+    }
+    if (session.plan.outcome == "failed") {
+        set_session_scratchpad(session, "plan step failed");
+        return;
+    }
+    if (session.plan.outcome == "planner_reentry_blocked") {
+        set_session_scratchpad(session, "planner reentry blocked during execution");
+        return;
+    }
+    if (session.plan.current_step_index >= 0 &&
+        session.plan.current_step_index < static_cast<int>(session.plan.steps.size())) {
+        const int human_index = session.plan.current_step_index + 1;
+        set_session_scratchpad(session,
+                               "executing plan step " + std::to_string(human_index) + "/" +
+                                   std::to_string(session.plan.steps.size()) + ": " +
+                                   session.plan.steps[session.plan.current_step_index].title);
+    }
+}
+
+void fail_current_plan_step(SessionState& session, const std::string& outcome) {
+    if (session.plan.current_step_index >= 0 &&
+        session.plan.current_step_index < static_cast<int>(session.plan.steps.size())) {
+        session.plan.steps[session.plan.current_step_index].status = "failed";
+    }
+    session.plan.outcome = outcome;
+    touch_session(session);
+    update_plan_scratchpad(session);
+}
+
+void complete_current_plan_step(SessionState& session) {
+    if (session.plan.current_step_index < 0 ||
+        session.plan.current_step_index >= static_cast<int>(session.plan.steps.size())) {
+        return;
+    }
+
+    session.plan.steps[session.plan.current_step_index].status = "completed";
+    const int next_index = session.plan.current_step_index + 1;
+    if (next_index >= static_cast<int>(session.plan.steps.size())) {
+        session.plan.current_step_index = -1;
+        session.plan.outcome = "completed";
+        touch_session(session);
+        update_plan_scratchpad(session);
+        return;
+    }
+
+    session.plan.current_step_index = next_index;
+    session.plan.steps[next_index].status = "in_progress";
+    session.plan.outcome = "in_progress";
+    touch_session(session);
+    update_plan_scratchpad(session);
+}
+
 void append_tool_message(nlohmann::json& messages,
                          const std::string& tool_call_id,
                          const std::string& name,
@@ -498,6 +1117,11 @@ bool try_parse_tool_result(const ToolCall& tc, const std::string& raw_output, nl
 
 }  // namespace
 
+std::string make_plan_repair_prompt(const AgentConfig& config,
+                                    const std::vector<std::string>& errors) {
+    return build_plan_repair_prompt_for_config(config, errors);
+}
+
 void agent_run(const AgentConfig& config,
                const std::string& system_prompt,
                const std::string& user_prompt,
@@ -509,17 +1133,40 @@ void agent_run(const AgentConfig& config,
     nlohmann::json local_messages = nlohmann::json::array();
     nlohmann::json& messages = session_state != nullptr ? session_state->messages : local_messages;
     const ToolRegistry& runtime_registry = tool_registry != nullptr ? *tool_registry : get_default_tool_registry();
+    std::string needs_plan_decision = "session_not_persisted";
+    const PlannerRepairModeSelection planner_repair_mode_selection =
+        llm_resolve_planner_repair_mode(config);
 
     if (session_state != nullptr) {
         if (!messages.is_array()) {
             messages = nlohmann::json::array();
         }
         seed_session_messages_if_empty(*session_state, system_prompt, user_prompt);
+        if (session_waiting_on_plan_contract(session_state)) {
+            session_state->needs_plan = true;
+            needs_plan_decision = "resume_waiting_plan_contract";
+        } else if (!session_has_active_plan(session_state) && session_state->plan.steps.empty()) {
+            session_state->needs_plan = prompt_needs_plan(user_prompt);
+            if (session_state->needs_plan) {
+                begin_planner_contract(session_state);
+                needs_plan_decision = "heuristic_requires_plan_contract";
+            } else {
+                clear_planner_contract_fields(session_state);
+                set_plan_state(session_state, kPlanStateIdle);
+                needs_plan_decision = "heuristic_skips_plan_contract";
+            }
+            touch_session(*session_state);
+        } else if (session_has_active_plan(session_state)) {
+            needs_plan_decision = "resume_active_plan_execution";
+        } else {
+            needs_plan_decision = "preserve_existing_session_plan_state";
+        }
     } else {
         if (!system_prompt.empty()) {
             messages.push_back({{"role", "system"}, {"content", system_prompt}});
         }
         messages.push_back({{"role", "user"}, {"content", user_prompt}});
+        needs_plan_decision = "stateless_session";
     }
 
     int turns = session_state != nullptr ? session_state->turn_index : 0;
@@ -527,6 +1174,12 @@ void agent_run(const AgentConfig& config,
     std::unordered_map<std::string, int> failure_retry_counts;
     std::string run_outcome = "completed";
     std::string run_message = "agent run completed";
+    nlohmann::json accumulated_usage = nlohmann::json{
+        {"prompt_tokens", 0},
+        {"completion_tokens", 0},
+        {"total_tokens", 0}
+    };
+    bool saw_usage = false;
 
     NullTraceSink null_trace_sink;
     FanoutTraceSink fanout_trace_sink;
@@ -571,6 +1224,11 @@ void agent_run(const AgentConfig& config,
     nlohmann::json run_started_payload = build_trace_payload();
     run_started_payload["detail_mode"] = config.detail_mode;
     run_started_payload["trace_jsonl_enabled"] = trace_sink != nullptr;
+    run_started_payload["needs_plan_decision"] = needs_plan_decision;
+    run_started_payload["planner_repair_effective_mode"] =
+        planner_repair_mode_selection.effective_mode;
+    run_started_payload["planner_repair_mode_reason"] =
+        planner_repair_mode_selection.reason;
     emit_trace("run_started", "agent run started", std::move(run_started_payload));
 
     while (true) {
@@ -598,6 +1256,9 @@ void agent_run(const AgentConfig& config,
         LOG_INFO("Agent Turn " + std::to_string(turns) + " started...");
         emit_trace("turn_started", "agent turn started", build_trace_payload(turns));
 
+        const bool planning_turn = session_waiting_on_plan_contract(session_state);
+        const bool execution_turn = session_plan_ready_for_execution(session_state);
+
         // Execute LLM Step
         nlohmann::json response_message;
         try {
@@ -606,6 +1267,9 @@ void agent_run(const AgentConfig& config,
             LOG_ERROR(std::string("LLM Execution failed: ") + e.what());
             std::cerr << "[Agent Error] LLM request failed: " << e.what() << "\n";
             if (session_state != nullptr) {
+                if (execution_turn) {
+                    fail_current_plan_step(*session_state, "failed");
+                }
                 set_session_scratchpad(*session_state,
                                        "turn " + std::to_string(turns) + ": llm request failed");
             }
@@ -615,6 +1279,25 @@ void agent_run(const AgentConfig& config,
         }
 
         nlohmann::json llm_payload = build_trace_payload(turns);
+        if (response_message.contains("usage") && response_message.at("usage").is_object()) {
+            const auto& usage = response_message.at("usage");
+            apply_usage_to_trace_payload(&llm_payload, usage);
+            if (usage.contains("prompt_tokens") && usage.at("prompt_tokens").is_number_integer()) {
+                accumulated_usage["prompt_tokens"] =
+                    accumulated_usage.value("prompt_tokens", 0) + usage.at("prompt_tokens").get<int>();
+                saw_usage = true;
+            }
+            if (usage.contains("completion_tokens") && usage.at("completion_tokens").is_number_integer()) {
+                accumulated_usage["completion_tokens"] =
+                    accumulated_usage.value("completion_tokens", 0) + usage.at("completion_tokens").get<int>();
+                saw_usage = true;
+            }
+            if (usage.contains("total_tokens") && usage.at("total_tokens").is_number_integer()) {
+                accumulated_usage["total_tokens"] =
+                    accumulated_usage.value("total_tokens", 0) + usage.at("total_tokens").get<int>();
+                saw_usage = true;
+            }
+        }
         const bool has_content =
             response_message.contains("content") && response_message.at("content").is_string() &&
             !response_message.value("content", "").empty();
@@ -630,10 +1313,176 @@ void agent_run(const AgentConfig& config,
             touch_session(*session_state);
         }
 
+        if (planning_turn && session_state != nullptr) {
+            const bool repair_turn = session_state->plan_state == kPlanStateAwaitingRepair;
+            nlohmann::json planner_response_payload = build_trace_payload(turns);
+            planner_response_payload["planner_raw_response"] =
+                response_message.is_object() ? response_message : nlohmann::json::object();
+            append_planner_state_to_trace_payload(&planner_response_payload,
+                                                  session_state,
+                                                  needs_plan_decision,
+                                                  planner_repair_mode_selection);
+            emit_trace("planner_response_received",
+                       "planner response received",
+                       std::move(planner_response_payload));
+
+            nlohmann::json extracted_contract = nlohmann::json::object();
+            std::vector<std::string> validation_errors;
+            if (try_extract_plan_contract_candidate(response_message, &extracted_contract, &validation_errors)) {
+                validate_plan_contract_candidate(response_message, extracted_contract, &validation_errors);
+            }
+
+            bool normalization_applied = false;
+            nlohmann::json validated_artifact = extracted_contract;
+            if (validation_errors.empty()) {
+                if (!normalize_plan_contract(&validated_artifact, &normalization_applied)) {
+                    validation_errors.push_back(
+                        "Planner response field 'plan.steps' may only use keys shaped like step-1, step-2, ....");
+                } else {
+                    validate_normalized_plan_contract(validated_artifact, &validation_errors);
+                }
+            }
+
+            if (validation_errors.empty()) {
+                Plan planned;
+                std::string plan_err;
+                if (!build_plan_from_validated_artifact(validated_artifact,
+                                                        session_state->plan.generation,
+                                                        &planned,
+                                                        &plan_err)) {
+                    validation_errors.push_back(plan_err);
+                } else {
+                    persist_plan_contract_success(session_state,
+                                                  response_message,
+                                                  validated_artifact,
+                                                  normalization_applied);
+                    session_state->plan = std::move(planned);
+                    session_state->needs_plan = true;
+                    touch_session(*session_state);
+                    update_plan_scratchpad(*session_state);
+                    if (repair_turn) {
+                        nlohmann::json repair_succeeded_payload = build_trace_payload(turns);
+                        repair_succeeded_payload["planner_raw_response"] = session_state->plan_raw_response;
+                        repair_succeeded_payload["plan_validated_artifact"] =
+                            session_state->plan_validated_artifact;
+                        repair_succeeded_payload["normalization_applied"] =
+                            session_state->plan_normalization_applied;
+                        append_planner_state_to_trace_payload(&repair_succeeded_payload,
+                                                              session_state,
+                                                              needs_plan_decision,
+                                                              planner_repair_mode_selection);
+                        emit_trace("planner_repair_succeeded",
+                                   "planner repair succeeded",
+                                   std::move(repair_succeeded_payload));
+                    }
+                    nlohmann::json plan_ready_payload = build_trace_payload(turns);
+                    plan_ready_payload["plan_validated_artifact"] =
+                        session_state->plan_validated_artifact;
+                    plan_ready_payload["normalization_applied"] =
+                        session_state->plan_normalization_applied;
+                    append_planner_state_to_trace_payload(&plan_ready_payload,
+                                                          session_state,
+                                                          needs_plan_decision,
+                                                          planner_repair_mode_selection);
+                    emit_trace("plan_ready", "plan ready", std::move(plan_ready_payload));
+                    continue;
+                }
+            }
+
+            if (repair_turn) {
+                const std::string combined_errors = validation_errors.empty()
+                    ? std::string("Planner response invalid.")
+                    : validation_errors.front();
+                LOG_ERROR("Planner response invalid after repair: {}", combined_errors);
+                std::cerr << "[Agent Error] Planner response invalid: " << combined_errors << "\n";
+                persist_plan_contract_failure(session_state,
+                                              response_message,
+                                              validation_errors,
+                                              normalization_applied,
+                                              kPlanStatePlanInvalid);
+                nlohmann::json validation_failed_payload = build_trace_payload(turns);
+                validation_failed_payload["planner_raw_response"] = session_state->plan_raw_response;
+                validation_failed_payload["validation_errors"] = session_state->plan_validation_errors;
+                validation_failed_payload["normalization_applied"] =
+                    session_state->plan_normalization_applied;
+                append_planner_state_to_trace_payload(&validation_failed_payload,
+                                                      session_state,
+                                                      needs_plan_decision,
+                                                      planner_repair_mode_selection);
+                emit_trace("planner_validation_failed",
+                           "planner validation failed",
+                           std::move(validation_failed_payload));
+                session_state->plan.outcome = "failed";
+                touch_session(*session_state);
+                set_session_scratchpad(*session_state, "planner response invalid");
+                run_outcome = "planner_response_invalid";
+                run_message = "planner response invalid";
+                break;
+            }
+
+            const std::string combined_errors = validation_errors.empty()
+                ? std::string("Planner response invalid.")
+                : validation_errors.front();
+            LOG_ERROR("Planner response invalid: {}", combined_errors);
+            session_state->plan_repair_attempts = 1;
+            persist_plan_contract_failure(session_state,
+                                          response_message,
+                                          validation_errors,
+                                          normalization_applied,
+                                          kPlanStateAwaitingRepair);
+            nlohmann::json validation_failed_payload = build_trace_payload(turns);
+            validation_failed_payload["planner_raw_response"] = session_state->plan_raw_response;
+            validation_failed_payload["validation_errors"] = session_state->plan_validation_errors;
+            validation_failed_payload["normalization_applied"] =
+                session_state->plan_normalization_applied;
+            append_planner_state_to_trace_payload(&validation_failed_payload,
+                                                  session_state,
+                                                  needs_plan_decision,
+                                                  planner_repair_mode_selection);
+            emit_trace("planner_validation_failed",
+                       "planner validation failed",
+                       std::move(validation_failed_payload));
+            messages.push_back(nlohmann::json{
+                {"role", "system"},
+                {"content", make_plan_repair_prompt(config, validation_errors)}
+            });
+            touch_session(*session_state);
+            set_session_scratchpad(*session_state, "planner response invalid, requesting repair");
+            nlohmann::json repair_requested_payload = build_trace_payload(turns);
+            repair_requested_payload["validation_errors"] = session_state->plan_validation_errors;
+            append_planner_state_to_trace_payload(&repair_requested_payload,
+                                                  session_state,
+                                                  needs_plan_decision,
+                                                  planner_repair_mode_selection);
+            emit_trace("planner_repair_requested",
+                       "planner repair requested",
+                       std::move(repair_requested_payload));
+            continue;
+        }
+
+        if (execution_turn && response_contains_plan_contract(response_message) && session_state != nullptr) {
+            LOG_ERROR("Planner reentry blocked during execution.");
+            std::cerr << "[Agent Error] Planner reentry blocked during execution.\n";
+            fail_current_plan_step(*session_state, "planner_reentry_blocked");
+            run_outcome = "planner_reentry_blocked";
+            run_message = "planner reentry blocked during execution";
+            break;
+        }
+
         if (!response_message.contains("tool_calls") || response_message["tool_calls"].empty()) {
             LOG_INFO("No tool calls. Agent loop complete.");
             std::cout << "[Agent Complete] " << response_message.value("content", "") << "\n";
             if (session_state != nullptr) {
+                if (execution_turn) {
+                    complete_current_plan_step(*session_state);
+                    if (!session_has_active_plan(session_state) &&
+                        !response_message.value("content", "").empty()) {
+                        set_session_scratchpad(*session_state, response_message.value("content", ""));
+                    }
+                    if (session_has_active_plan(session_state)) {
+                        continue;
+                    }
+                }
                 const std::string content = response_message.value("content", "");
                 set_session_scratchpad(*session_state,
                                        content.empty()
@@ -678,6 +1527,7 @@ void agent_run(const AgentConfig& config,
         }
 
         bool state_contaminated = false;
+        bool recoverable_failure_encountered = false;
 
         // Ensure sequentially execute tools
         for (std::size_t tool_index = 0; tool_index < tool_calls.size(); ++tool_index) {
@@ -751,6 +1601,9 @@ void agent_run(const AgentConfig& config,
                 LOG_ERROR("Tool failed fatally: " + output);
                 std::cerr << "[Agent Error] Tool " << tc.name << " failed fatally: " << output << "\n";
                 if (session_state != nullptr) {
+                    if (execution_turn) {
+                        fail_current_plan_step(*session_state, "failed");
+                    }
                     set_session_scratchpad(*session_state,
                                            "turn " + std::to_string(turns) + ": fatal tool failure in " + tc.name);
                 }
@@ -766,6 +1619,9 @@ void agent_run(const AgentConfig& config,
                 std::cerr << "[Agent Error] Tool " << tc.name
                           << " repeated the same recoverable failure and exceeded the retry budget.\n";
                 if (session_state != nullptr) {
+                    if (execution_turn) {
+                        fail_current_plan_step(*session_state, "failed");
+                    }
                     set_session_scratchpad(*session_state,
                                            "turn " + std::to_string(turns) + ": retry budget exceeded for " + tc.name);
                 }
@@ -780,6 +1636,7 @@ void agent_run(const AgentConfig& config,
                 {"role", "system"},
                 {"content", make_recovery_guidance_message(tc, analysis)}
             });
+            recoverable_failure_encountered = true;
             if (session_state != nullptr) {
                 set_session_scratchpad(*session_state,
                                        "turn " + std::to_string(turns) + ": recoverable tool failure in " + tc.name);
@@ -820,6 +1677,19 @@ void agent_run(const AgentConfig& config,
             break;
         }
 
+        if (execution_turn && session_state != nullptr &&
+            !state_contaminated && !recoverable_failure_encountered) {
+            complete_current_plan_step(*session_state);
+            if (session_has_active_plan(session_state)) {
+                continue;
+            }
+            if (session_state->plan.outcome == "completed") {
+                run_outcome = "completed";
+                run_message = "agent run completed";
+                break;
+            }
+        }
+
         if (state_contaminated) {
             std::cerr << "[Agent Error] Run stopped due to state contamination (tool failure or timeout).\n";
             if (session_state != nullptr && session_state->scratchpad.empty()) {
@@ -832,7 +1702,17 @@ void agent_run(const AgentConfig& config,
 
     nlohmann::json run_finished_payload = build_trace_payload(turns > 0 ? turns : 0);
     run_finished_payload["outcome"] = run_outcome;
+    run_finished_payload["final_plan_state"] =
+        session_state != nullptr ? session_state->plan_state : std::string(kPlanStateIdle);
+    run_finished_payload["needs_plan_decision"] = needs_plan_decision;
+    run_finished_payload["planner_repair_effective_mode"] =
+        planner_repair_mode_selection.effective_mode;
+    run_finished_payload["planner_repair_mode_reason"] =
+        planner_repair_mode_selection.reason;
     run_finished_payload["turn_count"] = turns;
     run_finished_payload["tool_calls_requested"] = total_tool_calls;
+    if (saw_usage) {
+        apply_usage_to_trace_payload(&run_finished_payload, accumulated_usage);
+    }
     emit_trace("run_finished", run_message, std::move(run_finished_payload));
 }

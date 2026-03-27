@@ -29,3 +29,7 @@ void agent_run(const AgentConfig& config,
                SessionState* session_state = nullptr,
                const ToolRegistry* tool_registry = nullptr,
                TraceSink* trace_sink = nullptr);
+
+// Exposed for planner repair prompt unit tests.
+std::string make_plan_repair_prompt(const AgentConfig& config,
+                                    const std::vector<std::string>& errors);

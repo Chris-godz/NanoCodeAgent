@@ -122,6 +122,21 @@ TEST_F(CliTest, ParseDetailAndTraceJsonl) {
     EXPECT_EQ(*config.trace_jsonl, "tmp/trace.jsonl");
 }
 
+TEST_F(CliTest, ParsePlannerRepairOptions) {
+    AgentConfig config;
+    const char* argv[] = {
+        "agent",
+        "-e", "repair task",
+        "--planner-repair-prompt-version", "v2",
+        "--planner-repair-mode", "structured"
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
+
+    EXPECT_EQ(cli_parse(argc, const_cast<char**>(argv), config), CliResult::Success);
+    EXPECT_EQ(config.planner_repair_prompt_version, "v2");
+    EXPECT_EQ(config.planner_repair_mode, "structured");
+}
+
 TEST_F(CliTest, ParseRepeatableMcpServerFlags) {
     AgentConfig config;
     config.mcp_servers = {"from-env=python3 old.py"};

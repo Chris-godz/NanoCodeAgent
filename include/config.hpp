@@ -24,6 +24,8 @@ struct AgentConfig {
     std::optional<std::string> session_file;
     bool detail_mode = false;
     std::optional<std::string> trace_jsonl;
+    std::string planner_repair_prompt_version = "auto";
+    std::string planner_repair_mode = "auto";
     std::vector<std::string> mcp_servers;
     bool dry_run = false;
 

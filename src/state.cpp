@@ -13,6 +13,11 @@
 namespace {
 
 constexpr int kSessionStateSchemaVersion = 1;
+constexpr std::string_view kPlanStateIdle = "IDLE";
+constexpr std::string_view kPlanStateAwaitingPlan = "AWAITING_PLAN";
+constexpr std::string_view kPlanStateAwaitingRepair = "AWAITING_REPAIR";
+constexpr std::string_view kPlanStatePlanReady = "PLAN_READY";
+constexpr std::string_view kPlanStatePlanInvalid = "PLAN_INVALID";
 
 std::atomic<std::uint64_t> g_session_counter{0};
 
@@ -254,7 +259,7 @@ bool validate_messages_array(const nlohmann::json& messages, std::string* err) {
 
 void validate_plan_step_or_throw(const PlanStep& step) {
     if (!is_valid_plan_step_status(step.status)) {
-        throw_invalid_state("PlanStep status must be one of: pending, in_progress, completed.");
+        throw_invalid_state("PlanStep status must be one of: pending, in_progress, completed, failed.");
     }
     if (!step.metadata.is_object()) {
         throw_invalid_state("PlanStep metadata must be a JSON object.");
@@ -268,9 +273,62 @@ void validate_plan_or_throw(const Plan& plan) {
     if (!plan.metadata.is_object()) {
         throw_invalid_state("Plan metadata must be a JSON object.");
     }
+    if (plan.current_step_index < -1 ||
+        plan.current_step_index >= static_cast<int>(plan.steps.size())) {
+        throw_invalid_state("Plan current_step_index must reference an existing step or be -1.");
+    }
     for (const PlanStep& step : plan.steps) {
         validate_plan_step_or_throw(step);
     }
+}
+
+bool is_valid_plan_state(std::string_view state) {
+    return state == kPlanStateIdle ||
+           state == kPlanStateAwaitingPlan ||
+           state == kPlanStateAwaitingRepair ||
+           state == kPlanStatePlanReady ||
+           state == kPlanStatePlanInvalid;
+}
+
+bool plan_is_active_for_resume(const Plan& plan) {
+    return !plan.steps.empty() &&
+           plan.current_step_index >= 0 &&
+           plan.current_step_index < static_cast<int>(plan.steps.size()) &&
+           (plan.outcome.empty() || plan.outcome == "in_progress");
+}
+
+nlohmann::json make_plan_validated_artifact_from_plan(const Plan& plan) {
+    return nlohmann::json{
+        {"plan", {
+            {"summary", plan.summary},
+            {"steps", plan.steps},
+            {"metadata", plan.metadata}
+        }}
+    };
+}
+
+void validate_planner_contract_state_or_throw(const SessionState& session) {
+    if (!session.plan_raw_response.is_object()) {
+        throw_invalid_state("SessionState plan_raw_response must be a JSON object.");
+    }
+    if (!session.plan_validated_artifact.is_object()) {
+        throw_invalid_state("SessionState plan_validated_artifact must be a JSON object.");
+    }
+    if (session.plan_repair_attempts < 0) {
+        throw_invalid_state("SessionState plan_repair_attempts must be non-negative.");
+    }
+    if (!is_valid_plan_state(session.plan_state)) {
+        throw_invalid_state("SessionState plan_state must be one of: IDLE, AWAITING_PLAN, AWAITING_REPAIR, PLAN_READY, PLAN_INVALID.");
+    }
+}
+
+void clear_planner_contract_state(SessionState& session) {
+    session.plan_raw_response = nlohmann::json::object();
+    session.plan_validated_artifact = nlohmann::json::object();
+    session.plan_validation_errors.clear();
+    session.plan_normalization_applied = false;
+    session.plan_repair_attempts = 0;
+    session.plan_state = std::string(kPlanStateIdle);
 }
 
 void validate_trace_event_or_throw(const TraceEvent& event) {
@@ -281,6 +339,7 @@ void validate_trace_event_or_throw(const TraceEvent& event) {
 
 void validate_session_state_for_json_or_throw(const SessionState& session) {
     validate_plan_or_throw(session.plan);
+    validate_planner_contract_state_or_throw(session);
     for (const TraceEvent& event : session.trace) {
         validate_trace_event_or_throw(event);
     }
@@ -296,10 +355,11 @@ std::string make_session_id() {
 }  // namespace
 
 bool is_valid_plan_step_status(std::string_view status) {
-    static constexpr std::array<std::string_view, 3> kAllowedStatuses{
+    static constexpr std::array<std::string_view, 4> kAllowedStatuses{
         "pending",
         "in_progress",
-        "completed"
+        "completed",
+        "failed"
     };
 
     for (const std::string_view allowed : kAllowedStatuses) {
@@ -338,7 +398,7 @@ void from_json(const nlohmann::json& json_value, PlanStep& step) {
     }
     if (!is_valid_plan_step_status(parsed.status)) {
         throw std::invalid_argument(
-            "PlanStep status must be one of: pending, in_progress, completed.");
+            "PlanStep status must be one of: pending, in_progress, completed, failed.");
     }
     if (json_value.contains("detail")) {
         parsed.detail = json_value.at("detail").get<std::string>();
@@ -359,7 +419,9 @@ void to_json(nlohmann::json& json_value, const Plan& plan) {
         {"generation", plan.generation},
         {"summary", plan.summary},
         {"steps", plan.steps},
-        {"metadata", plan.metadata}
+        {"metadata", plan.metadata},
+        {"current_step_index", plan.current_step_index},
+        {"outcome", plan.outcome}
     };
 }
 
@@ -392,6 +454,15 @@ void from_json(const nlohmann::json& json_value, Plan& plan) {
             throw std::invalid_argument("Plan metadata must be a JSON object.");
         }
         parsed.metadata = json_value.at("metadata");
+    }
+    if (json_value.contains("current_step_index")) {
+        if (!json_value.at("current_step_index").is_number_integer()) {
+            throw std::invalid_argument("Plan current_step_index must be an integer.");
+        }
+        parsed.current_step_index = json_value.at("current_step_index").get<int>();
+    }
+    if (json_value.contains("outcome")) {
+        parsed.outcome = json_value.at("outcome").get<std::string>();
     }
 
     validate_plan_or_throw(parsed);
@@ -470,6 +541,8 @@ void touch_session(SessionState& session) {
 void prepare_session_state(SessionState& session,
                            const std::vector<std::string>& active_skills,
                            const nlohmann::json& active_rules_snapshot) {
+    const bool has_active_plan = plan_is_active_for_resume(session.plan);
+
     if (session.session_id.empty()) {
         session.session_id = make_session_id();
     }
@@ -483,7 +556,15 @@ void prepare_session_state(SessionState& session,
     session.active_rules_snapshot = active_rules_snapshot.is_object()
                                         ? active_rules_snapshot
                                         : nlohmann::json::object();
-    reset_session_plan(session);
+    if (has_active_plan) {
+        session.plan_state = std::string(kPlanStatePlanReady);
+        if (session.plan_validated_artifact.empty()) {
+            session.plan_validated_artifact = make_plan_validated_artifact_from_plan(session.plan);
+        }
+    } else {
+        reset_session_plan(session);
+        session.needs_plan = false;
+    }
     touch_session(session);
 }
 
@@ -492,6 +573,9 @@ void reset_session_plan(SessionState& session) {
     session.plan.summary.clear();
     session.plan.steps.clear();
     session.plan.metadata = nlohmann::json::object();
+    session.plan.current_step_index = -1;
+    session.plan.outcome.clear();
+    clear_planner_contract_state(session);
 }
 
 void seed_session_messages_if_empty(SessionState& session,
@@ -654,6 +738,8 @@ bool session_state_from_json(const nlohmann::json& json_value, SessionState* out
     }
 
     SessionState session = make_session_state();
+    bool saw_plan_state = false;
+    bool saw_plan_validated_artifact = false;
     if (json_value.contains("session_id") &&
         !read_string_field(json_value, "session_id", &session.session_id, err, true)) {
         return false;
@@ -784,6 +870,15 @@ bool session_state_from_json(const nlohmann::json& json_value, SessionState* out
         !read_string_field(json_value, "scratchpad", &session.scratchpad, err, true)) {
         return false;
     }
+    if (json_value.contains("needs_plan")) {
+        if (!json_value.at("needs_plan").is_boolean()) {
+            if (err) {
+                *err = "Field 'needs_plan' must be a boolean.";
+            }
+            return false;
+        }
+        session.needs_plan = json_value.at("needs_plan").get<bool>();
+    }
 
     if (json_value.contains("active_skills")) {
         const auto& active_skills = json_value.at("active_skills");
@@ -825,6 +920,92 @@ bool session_state_from_json(const nlohmann::json& json_value, SessionState* out
             }
             return false;
         }
+    }
+
+    if (json_value.contains("plan_raw_response")) {
+        if (!json_value.at("plan_raw_response").is_object()) {
+            if (err) {
+                *err = "Field 'plan_raw_response' must be an object.";
+            }
+            return false;
+        }
+        session.plan_raw_response = json_value.at("plan_raw_response");
+    }
+
+    if (json_value.contains("plan_validated_artifact")) {
+        if (!json_value.at("plan_validated_artifact").is_object()) {
+            if (err) {
+                *err = "Field 'plan_validated_artifact' must be an object.";
+            }
+            return false;
+        }
+        session.plan_validated_artifact = json_value.at("plan_validated_artifact");
+        saw_plan_validated_artifact = true;
+    }
+
+    if (json_value.contains("plan_validation_errors")) {
+        const auto& validation_errors = json_value.at("plan_validation_errors");
+        if (!validation_errors.is_array()) {
+            if (err) {
+                *err = "Field 'plan_validation_errors' must be an array of strings.";
+            }
+            return false;
+        }
+        session.plan_validation_errors.clear();
+        session.plan_validation_errors.reserve(validation_errors.size());
+        for (const auto& item : validation_errors) {
+            if (!item.is_string()) {
+                if (err) {
+                    *err = "Field 'plan_validation_errors' must be an array of strings.";
+                }
+                return false;
+            }
+            session.plan_validation_errors.push_back(item.get<std::string>());
+        }
+    }
+
+    if (json_value.contains("plan_normalization_applied")) {
+        if (!json_value.at("plan_normalization_applied").is_boolean()) {
+            if (err) {
+                *err = "Field 'plan_normalization_applied' must be a boolean.";
+            }
+            return false;
+        }
+        session.plan_normalization_applied = json_value.at("plan_normalization_applied").get<bool>();
+    }
+
+    if (json_value.contains("plan_repair_attempts")) {
+        if (!read_int_field(json_value,
+                            "plan_repair_attempts",
+                            &session.plan_repair_attempts,
+                            err,
+                            true)) {
+            return false;
+        }
+    }
+
+    if (json_value.contains("plan_state")) {
+        if (!json_value.at("plan_state").is_string()) {
+            if (err) {
+                *err = "Field 'plan_state' must be a string.";
+            }
+            return false;
+        }
+        session.plan_state = json_value.at("plan_state").get<std::string>();
+        if (!is_valid_plan_state(session.plan_state)) {
+            if (err) {
+                *err = "Field 'plan_state' must be one of: IDLE, AWAITING_PLAN, AWAITING_REPAIR, PLAN_READY, PLAN_INVALID.";
+            }
+            return false;
+        }
+        saw_plan_state = true;
+    }
+
+    if (!saw_plan_state && plan_is_active_for_resume(session.plan)) {
+        session.plan_state = std::string(kPlanStatePlanReady);
+    }
+    if (plan_is_active_for_resume(session.plan) && !saw_plan_validated_artifact) {
+        session.plan_validated_artifact = make_plan_validated_artifact_from_plan(session.plan);
     }
 
     if (json_value.contains("trace")) {
@@ -920,9 +1101,16 @@ nlohmann::json session_state_to_json(const SessionState& session) {
             {"observations", session.counters.observations}
         }},
         {"scratchpad", session.scratchpad},
+        {"needs_plan", session.needs_plan},
         {"active_skills", session.active_skills},
         {"active_rules_snapshot", session.active_rules_snapshot},
         {"plan", session.plan},
+        {"plan_raw_response", session.plan_raw_response},
+        {"plan_validated_artifact", session.plan_validated_artifact},
+        {"plan_validation_errors", session.plan_validation_errors},
+        {"plan_normalization_applied", session.plan_normalization_applied},
+        {"plan_repair_attempts", session.plan_repair_attempts},
+        {"plan_state", session.plan_state},
         {"trace", session.trace}
     };
 }

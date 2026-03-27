@@ -19,6 +19,8 @@ void print_help() {
               << "  --session-file <path>    Persist session state to a JSON file (Env: NCA_SESSION_FILE)\n"
               << "  --detail                 Enable structured detail tracing in session state (Env: NCA_DETAIL)\n"
               << "  --trace-jsonl <path>     Append structured trace events as JSONL (Env: NCA_TRACE_JSONL)\n"
+              << "  --planner-repair-prompt-version <auto|v1|v2|v3> Repair prompt template version (Default: auto; DeepSeek profile resolves to v2, Env: NCA_PLANNER_REPAIR_PROMPT_VERSION)\n"
+              << "  --planner-repair-mode <auto|baseline|structured|artifact_envelope> Repair request mode (Default: auto; DeepSeek profile resolves to structured, Env: NCA_PLANNER_REPAIR_MODE)\n"
               << "  --mcp-server <name=cmd>  Enable an MCP stdio server command (repeatable, Env: NCA_MCP_SERVER)\n"
               << "  --dry-run                Print what would be sent without making network requests (Env: NCA_DRY_RUN)\n"
               << "  --allow-mutating-tools   Allow approval-required mutating tools (Env: NCA_ALLOW_MUTATING_TOOLS)\n"
@@ -68,6 +70,8 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
         {"mcp-server", required_argument, nullptr, 3008},
         {"detail", no_argument, nullptr, 3009},
         {"trace-jsonl", required_argument, nullptr, 3010},
+        {"planner-repair-prompt-version", required_argument, nullptr, 3011},
+        {"planner-repair-mode", required_argument, nullptr, 3012},
         {nullptr, no_argument, nullptr, 0}
     };
 
@@ -145,6 +149,12 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
                 break;
             case 3010:
                 config.trace_jsonl = optarg;
+                break;
+            case 3011:
+                config.planner_repair_prompt_version = optarg;
+                break;
+            case 3012:
+                config.planner_repair_mode = optarg;
                 break;
             case 3003:
                 config.dry_run = true;

@@ -23,6 +23,8 @@ struct Plan {
     std::string summary;
     std::vector<PlanStep> steps;
     nlohmann::json metadata = nlohmann::json::object();
+    int current_step_index = -1;
+    std::string outcome;
 };
 
 struct TraceEvent {
@@ -85,9 +87,16 @@ struct SessionState {
     std::vector<McpToolCallObservationRecord> mcp_tool_call_observations;
     SessionCounters counters;
     std::string scratchpad;
+    bool needs_plan = false;
     std::vector<std::string> active_skills;
     nlohmann::json active_rules_snapshot = nlohmann::json::object();
     Plan plan;
+    nlohmann::json plan_raw_response = nlohmann::json::object();
+    nlohmann::json plan_validated_artifact = nlohmann::json::object();
+    std::vector<std::string> plan_validation_errors;
+    bool plan_normalization_applied = false;
+    int plan_repair_attempts = 0;
+    std::string plan_state = "IDLE";
     std::vector<TraceEvent> trace;
 };
 

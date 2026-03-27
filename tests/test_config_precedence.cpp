@@ -20,6 +20,8 @@ protected:
         unsetenv("NCA_SESSION_FILE");
         unsetenv("NCA_DETAIL");
         unsetenv("NCA_TRACE_JSONL");
+        unsetenv("NCA_PLANNER_REPAIR_PROMPT_VERSION");
+        unsetenv("NCA_PLANNER_REPAIR_MODE");
         unsetenv("NCA_MCP_SERVER");
 
         // Create a fake config file
@@ -35,6 +37,8 @@ protected:
         out << "session_file = conf-session.json\n";
         out << "detail = true\n";
         out << "trace_jsonl = conf-trace.jsonl\n";
+        out << "planner_repair_prompt_version = v2\n";
+        out << "planner_repair_mode = structured\n";
         out << "mcp_server = conf=python3 conf_server.py\n";
         out.close();
     }
@@ -59,6 +63,8 @@ TEST_F(ConfigPrecedenceTest, DefaultsOnly) {
     EXPECT_FALSE(cfg.session_file.has_value());
     EXPECT_FALSE(cfg.detail_mode);
     EXPECT_FALSE(cfg.trace_jsonl.has_value());
+    EXPECT_EQ(cfg.planner_repair_prompt_version, "auto");
+    EXPECT_EQ(cfg.planner_repair_mode, "auto");
     EXPECT_TRUE(cfg.mcp_servers.empty());
 }
 
@@ -83,6 +89,8 @@ TEST_F(ConfigPrecedenceTest, ConfigFileOverridesDefaults) {
     EXPECT_TRUE(cfg.detail_mode);
     ASSERT_TRUE(cfg.trace_jsonl.has_value());
     EXPECT_EQ(*cfg.trace_jsonl, "conf-trace.jsonl");
+    EXPECT_EQ(cfg.planner_repair_prompt_version, "v2");
+    EXPECT_EQ(cfg.planner_repair_mode, "structured");
     ASSERT_EQ(cfg.mcp_servers.size(), 1u);
     EXPECT_EQ(cfg.mcp_servers[0], "conf=python3 conf_server.py");
 }
@@ -97,6 +105,8 @@ TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
     setenv("NCA_SESSION_FILE", "env-session.json", 1);
     setenv("NCA_DETAIL", "0", 1);
     setenv("NCA_TRACE_JSONL", "env-trace.jsonl", 1);
+    setenv("NCA_PLANNER_REPAIR_PROMPT_VERSION", "v1", 1);
+    setenv("NCA_PLANNER_REPAIR_MODE", "artifact_envelope", 1);
     setenv("NCA_MCP_SERVER", "env=python3 env_server.py", 1);
     const char* argv[] = {"agent"};
     int argc = 1;
@@ -117,6 +127,8 @@ TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
     EXPECT_FALSE(cfg.detail_mode);
     ASSERT_TRUE(cfg.trace_jsonl.has_value());
     EXPECT_EQ(*cfg.trace_jsonl, "env-trace.jsonl");
+    EXPECT_EQ(cfg.planner_repair_prompt_version, "v1");
+    EXPECT_EQ(cfg.planner_repair_mode, "artifact_envelope");
     ASSERT_EQ(cfg.mcp_servers.size(), 1u);
     EXPECT_EQ(cfg.mcp_servers[0], "env=python3 env_server.py");
 }
@@ -129,12 +141,15 @@ TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     setenv("NCA_SESSION_FILE", "env-session.json", 1);
     setenv("NCA_DETAIL", "0", 1);
     setenv("NCA_TRACE_JSONL", "env-trace.jsonl", 1);
+    setenv("NCA_PLANNER_REPAIR_PROMPT_VERSION", "v1", 1);
+    setenv("NCA_PLANNER_REPAIR_MODE", "artifact_envelope", 1);
     setenv("NCA_MCP_SERVER", "env=python3 env_server.py", 1);
 
     const char* argv[] = {
         "agent", "--model", "cli-gpt", "--allow-mutating-tools", "--skill", "cli-skill-one",
         "--skill", "cli-skill-two", "--session-file", "cli-session.json",
         "--detail", "--trace-jsonl", "cli-trace.jsonl",
+        "--planner-repair-prompt-version", "v2", "--planner-repair-mode", "structured",
         "--mcp-server", "cli=python3 cli_server.py", "-e", "test"
     };
     int argc = sizeof(argv) / sizeof(argv[0]);
@@ -151,6 +166,8 @@ TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     EXPECT_FALSE(cfg.detail_mode);
     ASSERT_TRUE(cfg.trace_jsonl.has_value());
     EXPECT_EQ(cfg.trace_jsonl.value(), "env-trace.jsonl");
+    EXPECT_EQ(cfg.planner_repair_prompt_version, "v1");
+    EXPECT_EQ(cfg.planner_repair_mode, "artifact_envelope");
     ASSERT_EQ(cfg.mcp_servers.size(), 1u);
     EXPECT_EQ(cfg.mcp_servers[0], "env=python3 env_server.py");
 
@@ -168,6 +185,8 @@ TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     EXPECT_TRUE(cfg.detail_mode);
     ASSERT_TRUE(cfg.trace_jsonl.has_value());
     EXPECT_EQ(cfg.trace_jsonl.value(), "cli-trace.jsonl");
+    EXPECT_EQ(cfg.planner_repair_prompt_version, "v2");
+    EXPECT_EQ(cfg.planner_repair_mode, "structured");
     ASSERT_EQ(cfg.mcp_servers.size(), 1u);
     EXPECT_EQ(cfg.mcp_servers[0], "cli=python3 cli_server.py");
 }

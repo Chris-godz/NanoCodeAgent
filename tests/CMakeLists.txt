@@ -26,6 +26,10 @@ set(TEST_SOURCES
     ../src/trace.cpp
 )
 
+set(NET_SMOKE_ARTIFACT_SOURCES
+    net_smoke_artifacts.cpp
+)
+
 # CLI Test
 add_executable(test_cli test_cli.cpp ${TEST_SOURCES})
 target_link_libraries(test_cli PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
@@ -68,6 +72,10 @@ add_executable(test_llm_stream test_llm_stream.cpp ${TEST_SOURCES})
 target_link_libraries(test_llm_stream PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_llm_stream PRIVATE ../include)
 
+add_executable(test_planner_repair_prompt test_planner_repair_prompt.cpp ${TEST_SOURCES})
+target_link_libraries(test_planner_repair_prompt PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_planner_repair_prompt PRIVATE ../include)
+
 add_executable(test_toolcall_assembler test_toolcall_assembler.cpp ${TEST_SOURCES})
 target_link_libraries(test_toolcall_assembler PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_toolcall_assembler PRIVATE ../include)
@@ -93,6 +101,7 @@ gtest_discover_tests(test_http_limits)
 gtest_discover_tests(test_sse_parser)
 gtest_discover_tests(test_stream_limits)
 gtest_discover_tests(test_llm_stream)
+gtest_discover_tests(test_planner_repair_prompt)
 gtest_discover_tests(test_toolcall_assembler)
 gtest_discover_tests(test_write_file)
 gtest_discover_tests(test_read_file)
@@ -139,11 +148,16 @@ target_link_libraries(test_apply_patch PRIVATE GTest::gtest_main spdlog::spdlog 
 target_include_directories(test_apply_patch PRIVATE ../include)
 gtest_discover_tests(test_apply_patch)
 
-add_executable(test_net_smoke test_net_smoke.cpp ${TEST_SOURCES})
+add_executable(test_net_smoke test_net_smoke.cpp ${TEST_SOURCES} ${NET_SMOKE_ARTIFACT_SOURCES})
 target_link_libraries(test_net_smoke PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_net_smoke PRIVATE ../include)
 # Setup net test properties
 gtest_discover_tests(test_net_smoke PROPERTIES LABELS "net")
+
+add_executable(test_net_smoke_artifacts test_net_smoke_artifacts.cpp ${NET_SMOKE_ARTIFACT_SOURCES})
+target_link_libraries(test_net_smoke_artifacts PRIVATE GTest::gtest_main)
+target_include_directories(test_net_smoke_artifacts PRIVATE ../include)
+gtest_discover_tests(test_net_smoke_artifacts)
 
 add_executable(test_state_store test_state_store.cpp ${TEST_SOURCES})
 target_link_libraries(test_state_store PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
@@ -164,6 +178,11 @@ add_executable(test_state_integration test_state_integration.cpp ${TEST_SOURCES}
 target_link_libraries(test_state_integration PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_state_integration PRIVATE ../include)
 gtest_discover_tests(test_state_integration)
+
+add_executable(test_planning_runtime test_planning_runtime.cpp ${TEST_SOURCES})
+target_link_libraries(test_planning_runtime PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_planning_runtime PRIVATE ../include)
+gtest_add_tests(TARGET test_planning_runtime SOURCES test_planning_runtime.cpp)
 
 add_executable(test_mcp_transport test_mcp_transport.cpp ${TEST_SOURCES})
 target_link_libraries(test_mcp_transport PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)

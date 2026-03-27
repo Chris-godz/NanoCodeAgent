@@ -88,6 +88,8 @@ static void config_load_from_file(AgentConfig& config, const std::string& filepa
         else if (key == "session_file") config.session_file = val;
         else if (key == "detail") config.detail_mode = parse_bool_like(val);
         else if (key == "trace_jsonl") config.trace_jsonl = val;
+        else if (key == "planner_repair_prompt_version") config.planner_repair_prompt_version = val;
+        else if (key == "planner_repair_mode") config.planner_repair_mode = val;
         else if (key == "mcp_server") {
             if (auto normalized = normalize_mcp_server_spec(val)) {
                 config.mcp_servers.push_back(*normalized);
@@ -117,6 +119,10 @@ static void config_apply_env(AgentConfig& config) {
     if (const char* v = std::getenv("NCA_SESSION_FILE")) config.session_file = v;
     if (const char* v = std::getenv("NCA_DETAIL")) config.detail_mode = parse_bool_like(v);
     if (const char* v = std::getenv("NCA_TRACE_JSONL")) config.trace_jsonl = v;
+    if (const char* v = std::getenv("NCA_PLANNER_REPAIR_PROMPT_VERSION")) {
+        config.planner_repair_prompt_version = v;
+    }
+    if (const char* v = std::getenv("NCA_PLANNER_REPAIR_MODE")) config.planner_repair_mode = v;
     if (const char* v = std::getenv("NCA_MCP_SERVER")) {
         if (auto normalized = normalize_mcp_server_spec(v)) {
             config.mcp_servers = {*normalized};
