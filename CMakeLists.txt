@@ -39,9 +39,8 @@ find_package(CURL REQUIRED)
 # Include directories
 include_directories(include)
 
-# Source files
-set(SOURCES
-    src/main.cpp
+# Shared source files
+set(COMMON_SOURCES
     src/cli.cpp
     src/config.cpp
     src/workspace.cpp
@@ -67,11 +66,18 @@ set(SOURCES
     src/state.cpp
     src/state_store.cpp
     src/trace.cpp
+    src/harness.cpp
+    src/harness_scenarios.cpp
+    src/subprocess.cpp
 )
 
 # Main executable
-add_executable(agent ${SOURCES})
+add_executable(agent src/main.cpp ${COMMON_SOURCES})
 target_link_libraries(agent PRIVATE spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+
+# Harness runner executable
+add_executable(harness_runner src/harness_runner_main.cpp ${COMMON_SOURCES})
+target_link_libraries(harness_runner PRIVATE spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 
 # Enable testing
 enable_testing()

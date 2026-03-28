@@ -24,6 +24,9 @@ set(TEST_SOURCES
     ../src/state.cpp
     ../src/state_store.cpp
     ../src/trace.cpp
+    ../src/harness.cpp
+    ../src/harness_scenarios.cpp
+    ../src/subprocess.cpp
 )
 
 set(NET_SMOKE_ARTIFACT_SOURCES
@@ -193,3 +196,8 @@ add_executable(test_mcp_integration test_mcp_integration.cpp ${TEST_SOURCES})
 target_link_libraries(test_mcp_integration PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_mcp_integration PRIVATE ../include)
 gtest_discover_tests(test_mcp_integration)
+
+add_executable(test_harness_runner test_harness_runner.cpp ${TEST_SOURCES})
+target_link_libraries(test_harness_runner PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_harness_runner PRIVATE ../include)
+gtest_discover_tests(test_harness_runner)
